@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import ShoppingList from './ShoppingList'
 
 // ─────────────────────────────────────────────
 // NUTRITION CALCULATION ENGINE
@@ -214,6 +215,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
             { id: 'meals',     label: '🍽️ Meal Plan' },
             { id: 'week',      label: '📅 Weekly View' },
             { id: 'flags',     label: `⚠️ Health Flags${activeSymptoms.length > 0 ? ` (${activeSymptoms.length})` : ''}` },
+            { id: 'shopping', label: '🛒 Shopping List' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -608,6 +610,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
         )}
 
       </div>
+      {/* SHOPPING LIST TAB */}
+      {activeTab === 'shopping' && (
+      <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />
+      )}
     </div>
   )
 }
