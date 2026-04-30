@@ -130,7 +130,7 @@ function mealIcon(mealName) {
 // ─────────────────────────────────────────────
 // MAIN COMPONENT
 // ─────────────────────────────────────────────
-export default function NutritionPlan({ profile, onBack }) {
+export default function NutritionPlan({ profile, onBack, onSignOut }) {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [activeDay, setActiveDay] = useState(0)
   const [aiMealPlan, setAiMealPlan] = useState(null)
@@ -198,6 +198,11 @@ export default function NutritionPlan({ profile, onBack }) {
           <div className="bg-gray-100 text-gray-600 text-sm px-3 py-1 rounded-full">
             🏪 {Array.isArray(profile.store) ? profile.store.join(', ') : profile.store}
           </div>
+          <button
+            onClick={onSignOut}
+            className="bg-red-50 text-red-600 text-sm px-3 py-1 rounded-full hover:bg-red-100 transition font-semibold">
+            Sign Out
+          </button>
         </div>
       </nav>
 
