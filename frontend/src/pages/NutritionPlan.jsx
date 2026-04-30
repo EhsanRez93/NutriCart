@@ -1,10 +1,6 @@
 import { useState } from 'react'
 import ShoppingList from './ShoppingList'
 
-// ─────────────────────────────────────────────
-// NUTRITION CALCULATION ENGINE
-// Uses Mifflin-St Jeor formula
-// ─────────────────────────────────────────────
 function calculateNutrition(profile) {
   const weight = parseFloat(profile.currentWeight)
   const target = parseFloat(profile.targetWeight)
@@ -30,81 +26,50 @@ function calculateNutrition(profile) {
   return { calories, protein, carbs, fats, bmr: Math.round(bmr), tdee, weeksNeeded, monthsNeeded }
 }
 
-// ─────────────────────────────────────────────
-// SYMPTOM FLAGS
-// ─────────────────────────────────────────────
 const symptomAdvice = {
   'Fatigue / low energy': {
-    icon: '⚡',
-    color: 'bg-yellow-50 border-yellow-300',
+    icon: '⚡', color: 'bg-yellow-50 border-yellow-300',
     title: 'Low Energy Detected',
     advice: 'Your meal plan prioritises iron-rich foods (spinach, red meat, lentils) and B12 sources (eggs, salmon, dairy). Consider checking your ferritin levels with your doctor.',
     nutrients: ['Iron', 'B12', 'Vitamin D', 'Magnesium'],
   },
   'Poor sleep': {
-    icon: '🌙',
-    color: 'bg-blue-50 border-blue-300',
+    icon: '🌙', color: 'bg-blue-50 border-blue-300',
     title: 'Sleep Quality Flag',
     advice: 'We include magnesium-rich foods (nuts, seeds, dark chocolate) and avoid high-sugar meals after 6pm. Tryptophan sources like turkey and oats are added to dinner.',
     nutrients: ['Magnesium', 'Tryptophan', 'Zinc'],
   },
   'Brain fog': {
-    icon: '🧠',
-    color: 'bg-purple-50 border-purple-300',
+    icon: '🧠', color: 'bg-purple-50 border-purple-300',
     title: 'Cognitive Support',
     advice: 'Omega-3 fatty acids from salmon and walnuts are prioritised. Consistent meal timing helps stabilise blood sugar which directly impacts mental clarity.',
     nutrients: ['Omega-3', 'B6', 'Choline'],
   },
   'Digestive issues': {
-    icon: '🫁',
-    color: 'bg-green-50 border-green-300',
+    icon: '🫁', color: 'bg-green-50 border-green-300',
     title: 'Gut Health Support',
     advice: 'Probiotic foods (yogurt, kefir) and prebiotic fibre (oats, garlic, onion) are included. Highly processed foods are avoided in your plan.',
     nutrients: ['Probiotics', 'Fibre', 'Zinc'],
   },
   'Frequent illness': {
-    icon: '🛡️',
-    color: 'bg-red-50 border-red-300',
+    icon: '🛡️', color: 'bg-red-50 border-red-300',
     title: 'Immune System Support',
     advice: 'Vitamin C sources (peppers, citrus, broccoli) and zinc-rich foods (pumpkin seeds, chickpeas) are prioritised throughout your weekly plan.',
     nutrients: ['Vitamin C', 'Zinc', 'Vitamin D'],
   },
 }
 
-// ─────────────────────────────────────────────
-// STATIC FALLBACK MEAL PLAN (Day 1)
-// Shown before AI plan is generated
-// ─────────────────────────────────────────────
 function generateDayPlan() {
   return [
-    {
-      meal: 'Breakfast', time: '7:30 AM', icon: '🌅',
-      name: 'Oats with banana, peanut butter & whole milk',
-      calories: 620, protein: 22, carbs: 78, fats: 24, store: 'Lidl',
-      items: ['Rolled oats 80g', 'Banana 1x', 'Peanut butter 2 tbsp', 'Whole milk 300ml'],
-    },
-    {
-      meal: 'Lunch', time: '12:30 PM', icon: '☀️',
-      name: 'Chicken thighs with basmati rice & spinach',
-      calories: 780, protein: 52, carbs: 85, fats: 22, store: 'Kaufland',
-      items: ['Chicken thighs 200g', 'Basmati rice 150g', 'Fresh spinach 100g', 'Olive oil 1 tbsp'],
-    },
-    {
-      meal: 'Snack', time: '4:00 PM', icon: '🍎',
-      name: 'Greek yogurt with mixed nuts & honey',
-      calories: 430, protein: 18, carbs: 32, fats: 26, store: 'Billa',
-      items: ['Greek yogurt 200g', 'Mixed nuts 30g', 'Honey 1 tsp'],
-    },
-    {
-      meal: 'Dinner', time: '7:30 PM', icon: '🌙',
-      name: 'Salmon fillet with sweet potato & broccoli',
-      calories: 680, protein: 42, carbs: 58, fats: 24, store: 'Lidl',
-      items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'],
-    },
+    { meal: 'Breakfast', time: '7:30 AM', icon: '🌅', name: 'Oats with banana, peanut butter & whole milk', calories: 620, protein: 22, carbs: 78, fats: 24, store: 'Lidl', items: ['Rolled oats 80g', 'Banana 1x', 'Peanut butter 2 tbsp', 'Whole milk 300ml'] },
+    { meal: 'Lunch',     time: '12:30 PM', icon: '☀️', name: 'Chicken thighs with basmati rice & spinach',   calories: 780, protein: 52, carbs: 85, fats: 22, store: 'Kaufland', items: ['Chicken thighs 200g', 'Basmati rice 150g', 'Fresh spinach 100g', 'Olive oil 1 tbsp'] },
+    { meal: 'Snack',     time: '4:00 PM',  icon: '🍎', name: 'Greek yogurt with mixed nuts & honey',         calories: 430, protein: 18, carbs: 32, fats: 26, store: 'Billa', items: ['Greek yogurt 200g', 'Mixed nuts 30g', 'Honey 1 tsp'] },
+    { meal: 'Dinner',    time: '7:30 PM',  icon: '🌙', name: 'Salmon fillet with sweet potato & broccoli',   calories: 680, protein: 42, carbs: 58, fats: 24, store: 'Lidl', items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
   ]
 }
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
 const weeklyMeals = [
   'Oats + Chicken + Yogurt + Salmon',
   'Eggs + Tuna wrap + Nuts + Beef stir-fry',
@@ -115,9 +80,6 @@ const weeklyMeals = [
   'Smoothie + Leftovers + Yogurt + Roast',
 ]
 
-// ─────────────────────────────────────────────
-// MEAL ICONS helper
-// ─────────────────────────────────────────────
 function mealIcon(mealName) {
   if (!mealName) return '🍽️'
   const n = mealName.toLowerCase()
@@ -128,22 +90,21 @@ function mealIcon(mealName) {
   return '🍽️'
 }
 
-// ─────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────
 export default function NutritionPlan({ profile, onBack, onSignOut }) {
-  const [activeTab, setActiveTab] = useState('dashboard')
-  const [activeDay, setActiveDay] = useState(0)
-  const [aiMealPlan, setAiMealPlan] = useState(null)
-  const [loading, setLoading]       = useState(false)
-  const [aiError, setAiError]       = useState(null)
+  const [activeTab, setActiveTab]       = useState('dashboard')
+  const [activeDay, setActiveDay]       = useState(0)
+  const [aiMealPlan, setAiMealPlan]     = useState(null)
+  const [loading, setLoading]           = useState(false)
+  const [aiError, setAiError]           = useState(null)
+  const [swapMeal, setSwapMeal]         = useState(null)
+  const [alternatives, setAlternatives] = useState([])
+  const [swapLoading, setSwapLoading]   = useState(false)
 
   const nutrition      = calculateNutrition(profile)
   const staticDayPlan  = generateDayPlan()
   const symptoms       = Array.isArray(profile.symptoms) ? profile.symptoms : []
   const activeSymptoms = symptoms.filter(s => symptomAdvice[s])
 
-  // Use AI plan if available, otherwise static fallback
   const currentDayMeals = aiMealPlan
     ? aiMealPlan.days[activeDay]?.meals || staticDayPlan
     : staticDayPlan
@@ -153,7 +114,6 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
   const totalCarbs    = currentDayMeals.reduce((s, m) => s + (m.carbs    || 0), 0)
   const totalFats     = currentDayMeals.reduce((s, m) => s + (m.fats     || 0), 0)
 
-  // ── AI Plan Generator ─────────────────────
   async function generateAIPlan() {
     setLoading(true)
     setAiError(null)
@@ -183,10 +143,43 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
     }
   }
 
+  async function handleSwapMeal(meal) {
+    setSwapMeal(meal)
+    setSwapLoading(true)
+    setAlternatives([])
+    try {
+      const response = await fetch('https://nutricart-production-55b2.up.railway.app/api/swapmeal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ meal, profile })
+      })
+      const data = await response.json()
+      if (data.success) setAlternatives(data.alternatives)
+    } catch (err) {
+      console.error('Swap error:', err)
+    } finally {
+      setSwapLoading(false)
+    }
+  }
+
+  function confirmSwap(alternative) {
+    if (!aiMealPlan) return
+    const updatedDays = aiMealPlan.days.map((day, i) => {
+      if (i !== activeDay) return day
+      return {
+        ...day,
+        meals: day.meals.map(m => m.name === swapMeal.name ? alternative : m)
+      }
+    })
+    setAiMealPlan({ ...aiMealPlan, days: updatedDays })
+    setSwapMeal(null)
+    setAlternatives([])
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
 
-      {/* ── Top Nav ── */}
+      {/* Top Nav */}
       <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
         <div className="flex items-center gap-2">
           <span className="text-xl">🛒</span>
@@ -207,20 +200,20 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
         </div>
       </nav>
 
-      {/* ── Tab Bar ── */}
+      {/* Tab Bar */}
       <div className="bg-white border-b border-gray-200 px-6">
-        <div className="flex gap-6 max-w-5xl mx-auto">
+        <div className="flex gap-6 max-w-5xl mx-auto overflow-x-auto">
           {[
             { id: 'dashboard', label: '📊 Dashboard' },
             { id: 'meals',     label: '🍽️ Meal Plan' },
             { id: 'week',      label: '📅 Weekly View' },
             { id: 'flags',     label: `⚠️ Health Flags${activeSymptoms.length > 0 ? ` (${activeSymptoms.length})` : ''}` },
-            { id: 'shopping', label: '🛒 Shopping List' },
+            { id: 'shopping',  label: '🛒 Shopping List' },
           ].map(tab => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`py-3 text-sm font-semibold border-b-2 transition
+              className={`py-3 text-sm font-semibold border-b-2 transition whitespace-nowrap
                 ${activeTab === tab.id
                   ? 'border-green-600 text-green-700'
                   : 'border-transparent text-gray-500 hover:text-gray-700'}`}>
@@ -232,17 +225,12 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
 
-        {/* ══════════════════════════════════════
-            TAB: DASHBOARD
-        ══════════════════════════════════════ */}
+        {/* DASHBOARD TAB */}
         {activeTab === 'dashboard' && (
           <div>
-            {/* Header + AI Button */}
             <div className="mb-8 flex items-start justify-between flex-wrap gap-4">
               <div>
-                <h1 className="text-3xl font-extrabold text-gray-800">
-                  {profile.name}'s Nutrition Plan
-                </h1>
+                <h1 className="text-3xl font-extrabold text-gray-800">{profile.name}'s Nutrition Plan</h1>
                 <p className="text-gray-500 mt-1">
                   Goal: <span className="font-semibold text-green-700">{profile.goal}</span> ·
                   {' '}{profile.currentWeight}kg → {profile.targetWeight}kg ·
@@ -254,68 +242,43 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                 disabled={loading}
                 className="flex items-center gap-2 px-6 py-3 rounded-full font-bold text-white transition shadow-lg disabled:opacity-60"
                 style={{ background: loading ? '#9ca3af' : 'linear-gradient(to right, #7c3aed, #4f46e5)' }}>
-                {loading ? (
-                  <><span className="animate-spin">⏳</span> Generating your plan...</>
-                ) : (
-                  <>✨ {aiMealPlan ? 'Regenerate AI Plan' : 'Generate AI Meal Plan'}</>
-                )}
+                {loading ? <><span>⏳</span> Generating...</> : <>✨ {aiMealPlan ? 'Regenerate AI Plan' : 'Generate AI Meal Plan'}</>}
               </button>
             </div>
 
-            {/* Error message */}
             {aiError && (
               <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">
                 ⚠️ {aiError}
               </div>
             )}
 
-            {/* AI Plan Success Banner */}
             {aiMealPlan && (
               <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 mb-6 flex items-center justify-between">
-                <p className="text-purple-700 text-sm font-semibold">
-                  ✨ Your personalised AI meal plan is ready!
-                </p>
-                <button
-                  onClick={() => setActiveTab('meals')}
-                  className="text-purple-700 text-sm font-bold underline">
+                <p className="text-purple-700 text-sm font-semibold">✨ Your personalised AI meal plan is ready!</p>
+                <button onClick={() => setActiveTab('meals')} className="text-purple-700 text-sm font-bold underline">
                   View Meal Plan →
                 </button>
               </div>
             )}
 
-            {/* Calorie Target Card */}
-            <div
-              className="rounded-2xl p-6 text-white mb-6 shadow-lg"
-              style={{ background: 'linear-gradient(to right, #16a34a, #22c55e)' }}>
+            <div className="rounded-2xl p-6 text-white mb-6 shadow-lg" style={{ background: 'linear-gradient(to right, #16a34a, #22c55e)' }}>
               <p className="text-green-100 text-sm font-semibold mb-1">DAILY CALORIE TARGET</p>
               <div className="flex items-end gap-3">
                 <span className="text-6xl font-extrabold">{nutrition.calories}</span>
                 <span className="text-green-200 mb-2">kcal / day</span>
               </div>
               <div className="flex gap-6 mt-4 text-sm">
-                <div>
-                  <p className="text-green-200">Maintenance</p>
-                  <p className="font-bold text-lg">{nutrition.tdee} kcal</p>
-                </div>
-                <div>
-                  <p className="text-green-200">BMR (at rest)</p>
-                  <p className="font-bold text-lg">{nutrition.bmr} kcal</p>
-                </div>
-                <div>
-                  <p className="text-green-200">Adjustment</p>
-                  <p className="font-bold text-lg">
-                    {nutrition.calories > nutrition.tdee ? '+' : ''}{nutrition.calories - nutrition.tdee} kcal
-                  </p>
-                </div>
+                <div><p className="text-green-200">Maintenance</p><p className="font-bold text-lg">{nutrition.tdee} kcal</p></div>
+                <div><p className="text-green-200">BMR (at rest)</p><p className="font-bold text-lg">{nutrition.bmr} kcal</p></div>
+                <div><p className="text-green-200">Adjustment</p><p className="font-bold text-lg">{nutrition.calories > nutrition.tdee ? '+' : ''}{nutrition.calories - nutrition.tdee} kcal</p></div>
               </div>
             </div>
 
-            {/* Macro Cards */}
             <div className="grid grid-cols-3 gap-4 mb-6">
               {[
-                { label: 'Protein',       value: nutrition.protein, unit: 'g', color: 'bg-blue-500',   light: 'bg-blue-50',   text: 'text-blue-700',   desc: 'Muscle building & repair' },
-                { label: 'Carbohydrates', value: nutrition.carbs,   unit: 'g', color: 'bg-yellow-500', light: 'bg-yellow-50', text: 'text-yellow-700', desc: 'Energy & brain fuel' },
-                { label: 'Fats',          value: nutrition.fats,    unit: 'g', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', desc: 'Hormones & absorption' },
+                { label: 'Protein', value: nutrition.protein, unit: 'g', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', desc: 'Muscle building & repair' },
+                { label: 'Carbohydrates', value: nutrition.carbs, unit: 'g', color: 'bg-yellow-500', light: 'bg-yellow-50', text: 'text-yellow-700', desc: 'Energy & brain fuel' },
+                { label: 'Fats', value: nutrition.fats, unit: 'g', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', desc: 'Hormones & absorption' },
               ].map((macro, i) => (
                 <div key={i} className={`${macro.light} rounded-2xl p-5`}>
                   <p className={`text-xs font-bold ${macro.text} uppercase tracking-wide mb-1`}>{macro.label}</p>
@@ -328,7 +291,6 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
               ))}
             </div>
 
-            {/* Timeline + Micronutrients */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4">⏱ Your Timeline</h3>
@@ -349,11 +311,11 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4">💊 Priority Micronutrients</h3>
                 {[
-                  { name: 'Iron',       reason: 'Energy & oxygen transport', pct: 85 },
-                  { name: 'Vitamin D',  reason: 'Mood & morning energy',     pct: 70 },
-                  { name: 'Magnesium',  reason: 'Sleep quality & muscle',    pct: 75 },
-                  { name: 'B12',        reason: 'Nervous system & energy',   pct: 90 },
-                  { name: 'Zinc',       reason: 'Immunity & recovery',       pct: 65 },
+                  { name: 'Iron',      reason: 'Energy & oxygen transport', pct: 85 },
+                  { name: 'Vitamin D', reason: 'Mood & morning energy',     pct: 70 },
+                  { name: 'Magnesium', reason: 'Sleep quality & muscle',    pct: 75 },
+                  { name: 'B12',       reason: 'Nervous system & energy',   pct: 90 },
+                  { name: 'Zinc',      reason: 'Immunity & recovery',       pct: 65 },
                 ].map((item, i) => (
                   <div key={i} className="mb-2">
                     <div className="flex justify-between text-xs mb-0.5">
@@ -370,16 +332,14 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* ══════════════════════════════════════
-            TAB: MEAL PLAN
-        ══════════════════════════════════════ */}
+        {/* MEAL PLAN TAB */}
         {activeTab === 'meals' && (
           <div>
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
               <h2 className="text-2xl font-extrabold text-gray-800">
                 {aiMealPlan ? '🤖 AI Generated Meal Plan' : "Today's Meal Plan"}
               </h2>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 {aiMealPlan && (
                   <div className="flex gap-1">
                     {DAYS.map((d, i) => (
@@ -387,9 +347,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                         key={i}
                         onClick={() => setActiveDay(i)}
                         className={`px-3 py-1 rounded-full text-xs font-bold transition
-                          ${activeDay === i
-                            ? 'bg-green-600 text-white'
-                            : 'bg-gray-100 text-gray-600 hover:bg-green-50'}`}>
+                          ${activeDay === i ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-50'}`}>
                         {d}
                       </button>
                     ))}
@@ -401,7 +359,6 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
               </div>
             </div>
 
-            {/* Meal Cards */}
             <div className="space-y-4 mb-8">
               {currentDayMeals.map((meal, i) => (
                 <div key={i} className="bg-white rounded-2xl p-5 shadow-sm hover:shadow-md transition">
@@ -409,9 +366,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                     <div className="flex items-center gap-3">
                       <span className="text-3xl">{mealIcon(meal.meal)}</span>
                       <div>
-                        <p className="text-xs text-gray-400 font-semibold uppercase">
-                          {meal.meal} · {meal.time}
-                        </p>
+                        <p className="text-xs text-gray-400 font-semibold uppercase">{meal.meal} · {meal.time}</p>
                         <p className="font-bold text-gray-800">{meal.name}</p>
                       </div>
                     </div>
@@ -421,7 +376,6 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                     </div>
                   </div>
 
-                  {/* Macros */}
                   <div className="flex gap-4 mb-3">
                     {[
                       { label: 'Protein', value: meal.protein, color: 'text-blue-600' },
@@ -435,19 +389,25 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                     ))}
                   </div>
 
-                  {/* Ingredients */}
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 mb-3">
                     {meal.items && meal.items.map((item, j) => (
                       <span key={j} className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">
                         {item}
                       </span>
                     ))}
                   </div>
+
+                  {aiMealPlan && (
+                    <button
+                      onClick={() => handleSwapMeal(meal)}
+                      className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition flex items-center gap-1">
+                      🔄 I don't like this — suggest alternatives
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
 
-            {/* Daily Totals */}
             <div className="bg-gray-800 text-white rounded-2xl p-5">
               <h3 className="font-bold mb-4">📊 Daily Totals vs Targets</h3>
               <div className="grid grid-cols-4 gap-4">
@@ -462,10 +422,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                   return (
                     <div key={i}>
                       <p className="text-gray-400 text-xs mb-1">{item.label}</p>
-                      <p className="text-2xl font-extrabold">
-                        {item.actual}
-                        <span className="text-sm text-gray-400">/{item.target}{item.unit}</span>
-                      </p>
+                      <p className="text-2xl font-extrabold">{item.actual}<span className="text-sm text-gray-400">/{item.target}{item.unit}</span></p>
                       <p className={`text-xs font-bold mt-1 ${ok ? 'text-green-400' : 'text-yellow-400'}`}>
                         {pct}% of target {ok ? '✓' : '⚠'}
                       </p>
@@ -477,9 +434,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* ══════════════════════════════════════
-            TAB: WEEKLY VIEW
-        ══════════════════════════════════════ */}
+        {/* WEEKLY VIEW TAB */}
         {activeTab === 'week' && (
           <div>
             <h2 className="text-2xl font-extrabold text-gray-800 mb-6">Weekly Overview</h2>
@@ -489,9 +444,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                   key={i}
                   onClick={() => setActiveDay(i)}
                   className={`rounded-xl py-3 px-4 text-center transition flex-1
-                    ${activeDay === i
-                      ? 'bg-green-600 text-white shadow-lg'
-                      : 'bg-white text-gray-600 hover:bg-green-50 shadow-sm'}`}>
+                    ${activeDay === i ? 'bg-green-600 text-white shadow-lg' : 'bg-white text-gray-600 hover:bg-green-50 shadow-sm'}`}>
                   <p className="text-xs font-bold">{day}</p>
                   <p className="text-lg mt-1">{['🟢','🟢','🟡','🟢','🟢','🔵','🔵'][i]}</p>
                 </button>
@@ -542,12 +495,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
 
             {!aiMealPlan && (
               <div className="mt-4 bg-purple-50 border border-purple-200 rounded-2xl p-4 text-center">
-                <p className="text-purple-700 text-sm mb-3">
-                  Generate your AI meal plan to see a unique personalised plan for each day
-                </p>
-                <button
-                  onClick={() => { setActiveTab('dashboard') }}
-                  className="text-purple-700 font-bold text-sm underline">
+                <p className="text-purple-700 text-sm mb-3">Generate your AI meal plan to see a unique personalised plan for each day</p>
+                <button onClick={() => setActiveTab('dashboard')} className="text-purple-700 font-bold text-sm underline">
                   Go to Dashboard → Generate AI Plan
                 </button>
               </div>
@@ -555,15 +504,11 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* ══════════════════════════════════════
-            TAB: HEALTH FLAGS
-        ══════════════════════════════════════ */}
+        {/* HEALTH FLAGS TAB */}
         {activeTab === 'flags' && (
           <div>
             <h2 className="text-2xl font-extrabold text-gray-800 mb-2">Health Flags</h2>
-            <p className="text-gray-500 mb-6">
-              Based on your symptoms, we've made these specific adjustments to your nutrition plan.
-            </p>
+            <p className="text-gray-500 mb-6">Based on your symptoms, we've made these specific adjustments to your nutrition plan.</p>
 
             {activeSymptoms.length === 0 ? (
               <div className="bg-green-50 rounded-2xl p-8 text-center">
@@ -601,19 +546,87 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
             <div className="mt-6 bg-gray-100 rounded-2xl p-4">
               <p className="text-xs text-gray-500">
                 <span className="font-bold">⚠️ Disclaimer: </span>
-                NutriCart provides nutrition guidance based on general principles.
-                This is not medical advice. Always consult a healthcare professional
-                before making significant dietary changes, especially if managing a health condition.
+                NutriCart provides nutrition guidance based on general principles. This is not medical advice.
               </p>
             </div>
           </div>
         )}
 
+        {/* SHOPPING LIST TAB */}
+        {activeTab === 'shopping' && (
+          <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />
+        )}
+
       </div>
-      {/* SHOPPING LIST TAB */}
-      {activeTab === 'shopping' && (
-      <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />
+
+      {/* SWAP MEAL MODAL */}
+      {swapMeal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full max-h-screen overflow-y-auto">
+
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-extrabold text-gray-800">🔄 Alternative Meals</h3>
+              <button
+                onClick={() => { setSwapMeal(null); setAlternatives([]) }}
+                className="text-gray-400 hover:text-gray-600 text-2xl font-bold">
+                ×
+              </button>
+            </div>
+
+            <div className="bg-orange-50 rounded-xl p-3 mb-4">
+              <p className="text-sm text-orange-700"><span className="font-bold">Replacing:</span> {swapMeal.name}</p>
+              <p className="text-xs text-orange-500 mt-1">{swapMeal.calories} kcal · {swapMeal.protein}g protein</p>
+            </div>
+
+            {swapLoading && (
+              <div className="text-center py-8">
+                <div className="text-4xl mb-3">🤖</div>
+                <p className="text-gray-500 font-semibold">AI is finding alternatives...</p>
+                <p className="text-gray-400 text-sm mt-1">Matching your nutrition targets</p>
+              </div>
+            )}
+
+            {!swapLoading && alternatives.length > 0 && (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500 mb-3">Choose a replacement:</p>
+                {alternatives.map((alt, i) => (
+                  <div
+                    key={i}
+                    onClick={() => confirmSwap(alt)}
+                    className="border-2 border-gray-200 hover:border-green-500 hover:bg-green-50 rounded-2xl p-4 cursor-pointer transition">
+                    <div className="flex items-start justify-between mb-2">
+                      <p className="font-bold text-gray-800 text-sm">{alt.name}</p>
+                      <span className="text-green-700 font-bold text-sm">{alt.calories} kcal</span>
+                    </div>
+                    <div className="flex gap-3 mb-2">
+                      {[
+                        { label: 'Protein', value: alt.protein, color: 'text-blue-600' },
+                        { label: 'Carbs',   value: alt.carbs,   color: 'text-yellow-600' },
+                        { label: 'Fats',    value: alt.fats,    color: 'text-orange-600' },
+                      ].map((m, j) => (
+                        <span key={j} className="text-xs">
+                          <span className={`font-bold ${m.color}`}>{m.label}: </span>
+                          <span className="text-gray-600">{m.value}g</span>
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-1">
+                      {alt.items && alt.items.slice(0, 3).map((item, j) => (
+                        <span key={j} className="bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded-full">
+                          {item}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-green-600 text-xs font-bold mt-2">✓ Tap to swap this meal</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+          </div>
+        </div>
       )}
+
     </div>
   )
 }

@@ -15,6 +15,7 @@ app.get('/health', (req, res) => {
   res.json({ status: 'NutriCart backend is running ✅' })
 })
 
+// ── Meal Plan Route ──────────────────────────────────
 app.post('/api/mealplan', async (req, res) => {
   try {
     const profile = req.body
@@ -34,7 +35,7 @@ Daily protein target: ${profile.protein}g
 Daily carbs target: ${profile.carbs}g
 Daily fats target: ${profile.fats}g
 
-Respond ONLY with a valid JSON object in this exact format, no other text, no markdown, no backticks:
+Respond ONLY with a valid JSON object in this exact format, no other text, no markdown:
 {
   "days": [
     {
@@ -85,6 +86,68 @@ Rules:
   }
 })
 
+// ── Meal Swap Route ──────────────────────────────────
+app.post('/api/swapmeal', async (req, res) => {
+  try {
+    const { meal, profile } = req.body
+
+    const prompt = `You are a professional nutritionist AI for NutriCart app.
+
+The user does not like this meal:
+- Name: ${meal.name}
+- Calories: ${meal.calories} kcal
+- Protein: ${meal.protein}g
+- Carbs: ${meal.carbs}g
+- Fats: ${meal.fats}g
+- Meal type: ${meal.meal} (${meal.time})
+- Preferred store: ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
+- User goal: ${profile.goal}
+- User symptoms: ${Array.isArray(profile.symptoms) ? profile.symptoms.join(', ') : profile.symptoms}
+
+Generate exactly 3 alternative meals that:
+1. Match the same meal type (${meal.meal})
+2. Have similar calories (within 100 kcal of ${meal.calories})
+3. Have similar protein (within 10g of ${meal.protein}g)
+4. Are completely different from "${meal.name}"
+5. Use products available at ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
+
+Respond ONLY with valid JSON, no other text:
+{
+  "alternatives": [
+    {
+      "meal": "${meal.meal}",
+      "time": "${meal.time}",
+      "name": "meal name here",
+      "calories": 600,
+      "protein": 25,
+      "carbs": 70,
+      "fats": 20,
+      "items": ["ingredient 1 with amount", "ingredient 2 with amount"],
+      "store": "${Array.isArray(profile.store) ? profile.store[0] : profile.store}"
+    }
+  ]
+}`
+
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 1500,
+      temperature: 0.8,
+    })
+
+    const responseText = completion.choices[0].message.content
+    const cleanJson    = responseText.replace(/```json|```/g, '').trim()
+    const result       = JSON.parse(cleanJson)
+
+    res.json({ success: true, alternatives: result.alternatives })
+
+  } catch (error) {
+    console.error('Swap meal error:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── Start Server ─────────────────────────────────────
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ NutriCart backend running on port ${PORT}`)
