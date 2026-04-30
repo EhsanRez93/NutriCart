@@ -61,10 +61,10 @@ const symptomAdvice = {
 
 function generateDayPlan() {
   return [
-    { meal: 'Breakfast', time: '7:30 AM', icon: '🌅', name: 'Oats with banana, peanut butter & whole milk', calories: 620, protein: 22, carbs: 78, fats: 24, store: 'Lidl', items: ['Rolled oats 80g', 'Banana 1x', 'Peanut butter 2 tbsp', 'Whole milk 300ml'] },
+    { meal: 'Breakfast', time: '7:30 AM',  icon: '🌅', name: 'Oats with banana, peanut butter & whole milk', calories: 620, protein: 22, carbs: 78, fats: 24, store: 'Lidl',     items: ['Rolled oats 80g', 'Banana 1x', 'Peanut butter 2 tbsp', 'Whole milk 300ml'] },
     { meal: 'Lunch',     time: '12:30 PM', icon: '☀️', name: 'Chicken thighs with basmati rice & spinach',   calories: 780, protein: 52, carbs: 85, fats: 22, store: 'Kaufland', items: ['Chicken thighs 200g', 'Basmati rice 150g', 'Fresh spinach 100g', 'Olive oil 1 tbsp'] },
-    { meal: 'Snack',     time: '4:00 PM',  icon: '🍎', name: 'Greek yogurt with mixed nuts & honey',         calories: 430, protein: 18, carbs: 32, fats: 26, store: 'Billa', items: ['Greek yogurt 200g', 'Mixed nuts 30g', 'Honey 1 tsp'] },
-    { meal: 'Dinner',    time: '7:30 PM',  icon: '🌙', name: 'Salmon fillet with sweet potato & broccoli',   calories: 680, protein: 42, carbs: 58, fats: 24, store: 'Lidl', items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
+    { meal: 'Snack',     time: '4:00 PM',  icon: '🍎', name: 'Greek yogurt with mixed nuts & honey',         calories: 430, protein: 18, carbs: 32, fats: 26, store: 'Billa',    items: ['Greek yogurt 200g', 'Mixed nuts 30g', 'Honey 1 tsp'] },
+    { meal: 'Dinner',    time: '7:30 PM',  icon: '🌙', name: 'Salmon fillet with sweet potato & broccoli',   calories: 680, protein: 42, carbs: 58, fats: 24, store: 'Lidl',     items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
   ]
 }
 
@@ -88,6 +88,100 @@ function mealIcon(mealName) {
   if (n === 'snack')     return '🍎'
   if (n === 'dinner')    return '🌙'
   return '🍽️'
+}
+
+// ─────────────────────────────────────────────
+// MACRO RING COMPONENT
+// Beautiful SVG circular progress ring
+// ─────────────────────────────────────────────
+function MacroRing({ label, value, unit, color, bgColor, textColor, desc, percentage }) {
+  const size     = 140
+  const stroke   = 10
+  const radius   = (size - stroke) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset   = circumference - (Math.min(percentage, 100) / 100) * circumference
+
+  return (
+    <div className="flex flex-col items-center bg-white rounded-2xl p-5 shadow-sm">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="rotate-[-90deg]">
+          {/* Background ring */}
+          <circle
+            cx={size / 2} cy={size / 2} r={radius}
+            fill="none" stroke={bgColor} strokeWidth={stroke}
+          />
+          {/* Progress ring */}
+          <circle
+            cx={size / 2} cy={size / 2} r={radius}
+            fill="none" stroke={color} strokeWidth={stroke}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 1s ease' }}
+          />
+        </svg>
+        {/* Center text */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className={`text-2xl font-extrabold ${textColor}`}>{value}</span>
+          <span className={`text-xs font-semibold ${textColor} opacity-70`}>{unit}</span>
+        </div>
+      </div>
+      <p className={`font-bold text-sm mt-3 ${textColor}`}>{label}</p>
+      <p className="text-gray-400 text-xs mt-0.5 text-center">{desc}</p>
+      <div className={`text-xs font-bold mt-2 px-3 py-1 rounded-full`} style={{ backgroundColor: bgColor, color: color }}>
+        {Math.round(percentage)}% of daily target
+      </div>
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────
+// CALORIE RING — larger center piece
+// ─────────────────────────────────────────────
+function CalorieRing({ calories, tdee, bmr, adjustment }) {
+  const size        = 200
+  const stroke      = 14
+  const radius      = (size - stroke) / 2
+  const circumference = 2 * Math.PI * radius
+  const percentage  = Math.min((calories / (tdee + 600)) * 100, 100)
+  const offset      = circumference - (percentage / 100) * circumference
+
+  return (
+    <div className="bg-white rounded-2xl p-6 shadow-sm flex flex-col items-center">
+      <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">Daily Calorie Target</p>
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="rotate-[-90deg]">
+          <circle cx={size/2} cy={size/2} r={radius} fill="none" stroke="#dcfce7" strokeWidth={stroke} />
+          <circle
+            cx={size/2} cy={size/2} r={radius}
+            fill="none" stroke="#16a34a" strokeWidth={stroke}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 1s ease' }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-4xl font-extrabold text-green-700">{calories}</span>
+          <span className="text-sm text-gray-400 font-semibold">kcal / day</span>
+        </div>
+      </div>
+      <div className="flex gap-6 mt-4 w-full justify-center">
+        <div className="text-center">
+          <p className="text-xs text-gray-400">Maintenance</p>
+          <p className="font-bold text-gray-700">{tdee} kcal</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-gray-400">BMR</p>
+          <p className="font-bold text-gray-700">{bmr} kcal</p>
+        </div>
+        <div className="text-center">
+          <p className="text-xs text-gray-400">Adjustment</p>
+          <p className="font-bold text-green-700">{adjustment > 0 ? '+' : ''}{adjustment} kcal</p>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 export default function NutritionPlan({ profile, onBack, onSignOut }) {
@@ -137,7 +231,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
         setAiError('Could not generate plan. Please try again.')
       }
     } catch (err) {
-      setAiError('Backend not reachable. Make sure the server is running on port 3001.')
+      setAiError('Backend not reachable. Make sure the server is running.')
     } finally {
       setLoading(false)
     }
@@ -225,9 +319,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
 
       <div className="max-w-5xl mx-auto px-6 py-8">
 
-        {/* DASHBOARD TAB */}
+        {/* ── DASHBOARD TAB ── */}
         {activeTab === 'dashboard' && (
           <div>
+            {/* Header */}
             <div className="mb-8 flex items-start justify-between flex-wrap gap-4">
               <div>
                 <h1 className="text-3xl font-extrabold text-gray-800">{profile.name}'s Nutrition Plan</h1>
@@ -247,50 +342,57 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
             </div>
 
             {aiError && (
-              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">
-                ⚠️ {aiError}
-              </div>
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">⚠️ {aiError}</div>
             )}
 
             {aiMealPlan && (
               <div className="bg-purple-50 border border-purple-200 rounded-xl px-4 py-3 mb-6 flex items-center justify-between">
                 <p className="text-purple-700 text-sm font-semibold">✨ Your personalised AI meal plan is ready!</p>
-                <button onClick={() => setActiveTab('meals')} className="text-purple-700 text-sm font-bold underline">
-                  View Meal Plan →
-                </button>
+                <button onClick={() => setActiveTab('meals')} className="text-purple-700 text-sm font-bold underline">View Meal Plan →</button>
               </div>
             )}
 
-            <div className="rounded-2xl p-6 text-white mb-6 shadow-lg" style={{ background: 'linear-gradient(to right, #16a34a, #22c55e)' }}>
-              <p className="text-green-100 text-sm font-semibold mb-1">DAILY CALORIE TARGET</p>
-              <div className="flex items-end gap-3">
-                <span className="text-6xl font-extrabold">{nutrition.calories}</span>
-                <span className="text-green-200 mb-2">kcal / day</span>
-              </div>
-              <div className="flex gap-6 mt-4 text-sm">
-                <div><p className="text-green-200">Maintenance</p><p className="font-bold text-lg">{nutrition.tdee} kcal</p></div>
-                <div><p className="text-green-200">BMR (at rest)</p><p className="font-bold text-lg">{nutrition.bmr} kcal</p></div>
-                <div><p className="text-green-200">Adjustment</p><p className="font-bold text-lg">{nutrition.calories > nutrition.tdee ? '+' : ''}{nutrition.calories - nutrition.tdee} kcal</p></div>
-              </div>
+            {/* ── CALORIE RING + MACRO RINGS ── */}
+            <div className="grid grid-cols-4 gap-4 mb-6">
+              <CalorieRing
+                calories={nutrition.calories}
+                tdee={nutrition.tdee}
+                bmr={nutrition.bmr}
+                adjustment={nutrition.calories - nutrition.tdee}
+              />
+              <MacroRing
+                label="Protein"
+                value={nutrition.protein}
+                unit="g"
+                color="#3b82f6"
+                bgColor="#dbeafe"
+                textColor="text-blue-600"
+                desc="Muscle building & repair"
+                percentage={(nutrition.protein / 200) * 100}
+              />
+              <MacroRing
+                label="Carbohydrates"
+                value={nutrition.carbs}
+                unit="g"
+                color="#eab308"
+                bgColor="#fef9c3"
+                textColor="text-yellow-600"
+                desc="Energy & brain fuel"
+                percentage={(nutrition.carbs / 400) * 100}
+              />
+              <MacroRing
+                label="Fats"
+                value={nutrition.fats}
+                unit="g"
+                color="#f97316"
+                bgColor="#ffedd5"
+                textColor="text-orange-600"
+                desc="Hormones & absorption"
+                percentage={(nutrition.fats / 100) * 100}
+              />
             </div>
 
-            <div className="grid grid-cols-3 gap-4 mb-6">
-              {[
-                { label: 'Protein', value: nutrition.protein, unit: 'g', color: 'bg-blue-500', light: 'bg-blue-50', text: 'text-blue-700', desc: 'Muscle building & repair' },
-                { label: 'Carbohydrates', value: nutrition.carbs, unit: 'g', color: 'bg-yellow-500', light: 'bg-yellow-50', text: 'text-yellow-700', desc: 'Energy & brain fuel' },
-                { label: 'Fats', value: nutrition.fats, unit: 'g', color: 'bg-orange-500', light: 'bg-orange-50', text: 'text-orange-700', desc: 'Hormones & absorption' },
-              ].map((macro, i) => (
-                <div key={i} className={`${macro.light} rounded-2xl p-5`}>
-                  <p className={`text-xs font-bold ${macro.text} uppercase tracking-wide mb-1`}>{macro.label}</p>
-                  <p className={`text-4xl font-extrabold ${macro.text}`}>{macro.value}<span className="text-xl">{macro.unit}</span></p>
-                  <p className="text-gray-500 text-xs mt-1">{macro.desc}</p>
-                  <div className="w-full bg-white rounded-full h-1.5 mt-3">
-                    <div className={`${macro.color} h-1.5 rounded-full`} style={{ width: '70%' }} />
-                  </div>
-                </div>
-              ))}
-            </div>
-
+            {/* Timeline + Micronutrients */}
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <h3 className="font-bold text-gray-800 mb-4">⏱ Your Timeline</h3>
@@ -332,7 +434,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* MEAL PLAN TAB */}
+        {/* ── MEAL PLAN TAB ── */}
         {activeTab === 'meals' && (
           <div>
             <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
@@ -424,7 +526,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
                       <p className="text-gray-400 text-xs mb-1">{item.label}</p>
                       <p className="text-2xl font-extrabold">{item.actual}<span className="text-sm text-gray-400">/{item.target}{item.unit}</span></p>
                       <p className={`text-xs font-bold mt-1 ${ok ? 'text-green-400' : 'text-yellow-400'}`}>
-                        {pct}% of target {ok ? '✓' : '⚠'}
+                        {pct}% {ok ? '✓' : '⚠'}
                       </p>
                     </div>
                   )
@@ -434,7 +536,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* WEEKLY VIEW TAB */}
+        {/* ── WEEKLY VIEW TAB ── */}
         {activeTab === 'week' && (
           <div>
             <h2 className="text-2xl font-extrabold text-gray-800 mb-6">Weekly Overview</h2>
@@ -504,7 +606,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* HEALTH FLAGS TAB */}
+        {/* ── HEALTH FLAGS TAB ── */}
         {activeTab === 'flags' && (
           <div>
             <h2 className="text-2xl font-extrabold text-gray-800 mb-2">Health Flags</h2>
@@ -552,14 +654,14 @@ export default function NutritionPlan({ profile, onBack, onSignOut }) {
           </div>
         )}
 
-        {/* SHOPPING LIST TAB */}
+        {/* ── SHOPPING LIST TAB ── */}
         {activeTab === 'shopping' && (
           <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />
         )}
 
       </div>
 
-      {/* SWAP MEAL MODAL */}
+      {/* ── SWAP MEAL MODAL ── */}
       {swapMeal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
           <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full max-h-screen overflow-y-auto">
