@@ -157,7 +157,7 @@ export default function NutritionPlan({ profile, onBack }) {
     setLoading(true)
     setAiError(null)
     try {
-      const response = await fetch('http://localhost:3001/api/mealplan', {
+      const response = await fetch('https://nutricart-production-55b2.up.railway.app/api/mealplan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
