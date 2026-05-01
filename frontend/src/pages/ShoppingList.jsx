@@ -1,101 +1,66 @@
 import { useState } from 'react'
 
-// ─────────────────────────────────────────────
-// CATEGORY MAPPER
-// Groups ingredients into store sections
-// ─────────────────────────────────────────────
 function categorizeItem(itemName) {
   const name = itemName.toLowerCase()
-  if (name.match(/chicken|beef|salmon|tuna|turkey|pork|lamb|fish|egg|shrimp/))
-    return 'Meat & Fish'
-  if (name.match(/milk|yogurt|cheese|butter|cream|kefir/))
-    return 'Dairy'
-  if (name.match(/rice|pasta|oat|bread|quinoa|noodle|flour|tortilla|pancake/))
-    return 'Grains & Carbs'
-  if (name.match(/spinach|broccoli|carrot|pepper|onion|garlic|tomato|lettuce|salad|vegetable|celery|asparagus|bean|pea|corn|mushroom|potato|sweet potato/))
-    return 'Vegetables'
-  if (name.match(/banana|apple|berry|berries|lemon|orange|fruit|grape|mango|avocado/))
-    return 'Fruits'
-  if (name.match(/olive oil|oil|butter|peanut butter|almond butter|hummus/))
-    return 'Oils & Spreads'
-  if (name.match(/nut|almond|walnut|cashew|seed|pumpkin seed/))
-    return 'Nuts & Seeds'
-  if (name.match(/honey|sugar|salt|pepper|spice|herb|sauce|soy|vinegar|mustard/))
-    return 'Condiments & Spices'
-  if (name.match(/protein powder|supplement/))
-    return 'Supplements'
+  if (name.match(/chicken|beef|salmon|tuna|turkey|pork|lamb|fish|egg|shrimp/)) return 'Meat & Fish'
+  if (name.match(/milk|yogurt|cheese|butter|cream|kefir/))                      return 'Dairy'
+  if (name.match(/rice|pasta|oat|bread|quinoa|noodle|flour|tortilla|pancake/))   return 'Grains & Carbs'
+  if (name.match(/spinach|broccoli|carrot|pepper|onion|garlic|tomato|lettuce|vegetable|potato|sweet potato|mushroom/)) return 'Vegetables'
+  if (name.match(/banana|apple|berry|berries|lemon|orange|fruit|avocado/))      return 'Fruits'
+  if (name.match(/olive oil|oil|peanut butter|almond butter|hummus/))           return 'Oils & Spreads'
+  if (name.match(/nut|almond|walnut|cashew|seed|pumpkin seed/))                 return 'Nuts & Seeds'
+  if (name.match(/honey|sugar|salt|pepper|spice|herb|sauce|soy|vinegar/))       return 'Condiments & Spices'
   return 'Other'
 }
 
 const CATEGORY_ICONS = {
-  'Meat & Fish':        '🥩',
-  'Dairy':              '🥛',
-  'Grains & Carbs':     '🌾',
-  'Vegetables':         '🥦',
-  'Fruits':             '🍎',
-  'Oils & Spreads':     '🫙',
-  'Nuts & Seeds':       '🥜',
-  'Condiments & Spices':'🧂',
-  'Supplements':        '💊',
-  'Other':              '🛒',
+  'Meat & Fish': '🥩', 'Dairy': '🥛', 'Grains & Carbs': '🌾',
+  'Vegetables': '🥦', 'Fruits': '🍎', 'Oils & Spreads': '🫙',
+  'Nuts & Seeds': '🥜', 'Condiments & Spices': '🧂', 'Other': '🛒',
 }
 
-const CATEGORY_ORDER = [
-  'Meat & Fish', 'Dairy', 'Grains & Carbs', 'Vegetables',
-  'Fruits', 'Oils & Spreads', 'Nuts & Seeds',
-  'Condiments & Spices', 'Supplements', 'Other'
-]
+const CATEGORY_ORDER = ['Meat & Fish','Dairy','Grains & Carbs','Vegetables','Fruits','Oils & Spreads','Nuts & Seeds','Condiments & Spices','Other']
 
-// ─────────────────────────────────────────────
-// EXTRACT INGREDIENTS FROM MEAL PLAN
-// ─────────────────────────────────────────────
+// Mock price data per store (€ per item estimate)
+const STORE_PRICE_MULTIPLIER = {
+  'Lidl':     1.0,
+  'Kaufland': 1.05,
+  'Billa':    1.12,
+  'Tesco':    1.08,
+  'Spar':     1.15,
+  'Aldi':     0.95,
+  'Penny':    0.97,
+}
+
+function estimateItemPrice(itemName) {
+  const name = itemName.toLowerCase()
+  if (name.match(/chicken|beef|salmon|tuna|turkey|pork|fish/)) return 3.50
+  if (name.match(/milk|yogurt/))  return 1.20
+  if (name.match(/cheese/))       return 2.50
+  if (name.match(/egg/))          return 2.00
+  if (name.match(/rice|pasta|oat|bread|quinoa/)) return 1.50
+  if (name.match(/spinach|broccoli|carrot|pepper|onion|potato|sweet potato/)) return 1.20
+  if (name.match(/banana|apple|berry|lemon|orange/)) return 1.00
+  if (name.match(/olive oil|peanut butter/)) return 3.00
+  if (name.match(/nut|almond|walnut|cashew|seed/)) return 2.50
+  if (name.match(/honey/))        return 2.20
+  return 1.00
+}
+
 function extractIngredients(aiMealPlan, staticDayPlan) {
   const allItems = {}
-
-  const days = aiMealPlan ? aiMealPlan.days : null
-
-  if (days) {
-    days.forEach(day => {
-      day.meals.forEach(meal => {
-        if (meal.items) {
-          meal.items.forEach(item => {
-            const key = item.toLowerCase().trim()
-            if (!allItems[key]) {
-              allItems[key] = {
-                name: item,
-                category: categorizeItem(item),
-                checked: false,
-                days: 1,
-              }
-            } else {
-              allItems[key].days += 1
-            }
-          })
-        }
-      })
-    })
-  } else {
-    staticDayPlan.forEach(meal => {
-      meal.items.forEach(item => {
-        const key = item.toLowerCase().trim()
-        if (!allItems[key]) {
-          allItems[key] = {
-            name: item,
-            category: categorizeItem(item),
-            checked: false,
-            days: 1,
-          }
-        }
-      })
-    })
-  }
-
+  const source = aiMealPlan ? aiMealPlan.days.flatMap(d => d.meals.flatMap(m => m.items || [])) : staticDayPlan.flatMap(m => m.items || [])
+  source.forEach(item => {
+    const key = item.toLowerCase().trim()
+    if (!allItems[key]) {
+      allItems[key] = { name: item, category: categorizeItem(item), checked: false, selected: false, count: 1, basePrice: estimateItemPrice(item) }
+    } else {
+      allItems[key].count += 1
+    }
+  })
   return allItems
 }
 
-// ─────────────────────────────────────────────
-// STATIC FALLBACK MEALS
-// ─────────────────────────────────────────────
 const staticDayPlan = [
   { meal: 'Breakfast', items: ['Rolled oats 80g', 'Banana 1x', 'Peanut butter 2 tbsp', 'Whole milk 300ml'] },
   { meal: 'Lunch',     items: ['Chicken thighs 200g', 'Basmati rice 150g', 'Fresh spinach 100g', 'Olive oil 1 tbsp'] },
@@ -103,57 +68,96 @@ const staticDayPlan = [
   { meal: 'Dinner',    items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
 ]
 
-// ─────────────────────────────────────────────
-// MAIN COMPONENT
-// ─────────────────────────────────────────────
 export default function ShoppingList({ profile, aiMealPlan }) {
-  const rawItems   = extractIngredients(aiMealPlan, staticDayPlan)
-  const [items, setItems] = useState(rawItems)
-  const [activeStore, setActiveStore] = useState(
-    Array.isArray(profile.store) ? profile.store[0] : profile.store
-  )
+  const rawItems      = extractIngredients(aiMealPlan, staticDayPlan)
+  const [items, setItems]           = useState(rawItems)
+  const [mode, setMode]             = useState('manual') // 'manual' | 'ai'
+  const [activeStore, setActiveStore] = useState(Array.isArray(profile.store) ? profile.store[0] : profile.store)
+  const [showComparison, setShowComparison] = useState(false)
+  const [aiSelecting, setAiSelecting] = useState(false)
 
-  const stores = Array.isArray(profile.store) ? profile.store : [profile.store]
+  const stores     = Array.isArray(profile.store) ? profile.store : [profile.store]
+  const itemList   = Object.values(items)
+  const totalItems = itemList.length
+  const checkedItems  = itemList.filter(i => i.checked).length
+  const selectedItems = itemList.filter(i => i.selected)
+  const progress   = Math.round((checkedItems / totalItems) * 100)
 
-  // Group items by category
+  // Group by category
   const grouped = {}
-  Object.values(items).forEach(item => {
+  itemList.forEach(item => {
     if (!grouped[item.category]) grouped[item.category] = []
     grouped[item.category].push(item)
   })
 
-  const totalItems    = Object.values(items).length
-  const checkedItems  = Object.values(items).filter(i => i.checked).length
-  const progress      = Math.round((checkedItems / totalItems) * 100)
-
   function toggleItem(key) {
-    setItems(prev => ({
-      ...prev,
-      [key]: { ...prev[key], checked: !prev[key].checked }
-    }))
+    setItems(prev => ({ ...prev, [key]: { ...prev[key], checked: !prev[key].checked } }))
+  }
+
+  function toggleSelect(key) {
+    setItems(prev => ({ ...prev, [key]: { ...prev[key], selected: !prev[key].selected } }))
   }
 
   function uncheckAll() {
     const reset = {}
-    Object.entries(items).forEach(([k, v]) => {
-      reset[k] = { ...v, checked: false }
-    })
+    Object.entries(items).forEach(([k, v]) => { reset[k] = { ...v, checked: false } })
     setItems(reset)
   }
 
-  function checkAll() {
+  function selectAll() {
     const all = {}
-    Object.entries(items).forEach(([k, v]) => {
-      all[k] = { ...v, checked: true }
-    })
+    Object.entries(items).forEach(([k, v]) => { all[k] = { ...v, selected: true } })
     setItems(all)
   }
+
+  function deselectAll() {
+    const none = {}
+    Object.entries(items).forEach(([k, v]) => { none[k] = { ...v, selected: false } })
+    setItems(none)
+  }
+
+  // AI selection: pick items that best meet budget and nutrition
+  function handleAISelect() {
+    setAiSelecting(true)
+    setTimeout(() => {
+      const budget = 50 // €50 weekly budget
+      let spent = 0
+      const aiSelected = {}
+      // Sort by nutrition value (protein sources first, then vegetables, etc.)
+      const priority = ['Meat & Fish','Grains & Carbs','Vegetables','Dairy','Fruits','Nuts & Seeds','Oils & Spreads','Condiments & Spices','Other']
+      const sorted = [...itemList].sort((a, b) => priority.indexOf(a.category) - priority.indexOf(b.category))
+      sorted.forEach(item => {
+        const price = item.basePrice * (STORE_PRICE_MULTIPLIER[activeStore] || 1)
+        if (spent + price <= budget) {
+          aiSelected[item.name.toLowerCase().trim()] = true
+          spent += price
+        }
+      })
+      const updated = {}
+      Object.entries(items).forEach(([k, v]) => { updated[k] = { ...v, selected: !!aiSelected[k] } })
+      setItems(updated)
+      setAiSelecting(false)
+    }, 1500)
+  }
+
+  // Price for a store
+  function getItemPrice(item, store) {
+    return (item.basePrice * (STORE_PRICE_MULTIPLIER[store] || 1)).toFixed(2)
+  }
+
+  function getTotalForStore(store) {
+    return selectedItems.length > 0
+      ? selectedItems.reduce((s, item) => s + item.basePrice * (STORE_PRICE_MULTIPLIER[store] || 1), 0).toFixed(2)
+      : itemList.reduce((s, item) => s + item.basePrice * (STORE_PRICE_MULTIPLIER[store] || 1), 0).toFixed(2)
+  }
+
+  const cheapestStore = stores.reduce((best, s) => parseFloat(getTotalForStore(s)) < parseFloat(getTotalForStore(best)) ? s : best, stores[0])
 
   return (
     <div className="max-w-3xl mx-auto px-6 py-8">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
         <div>
           <h2 className="text-2xl font-extrabold text-gray-800">🛒 Shopping List</h2>
           <p className="text-gray-500 text-sm mt-1">
@@ -161,69 +165,94 @@ export default function ShoppingList({ profile, aiMealPlan }) {
           </p>
         </div>
         <div className="flex gap-2">
-          <button
-            onClick={uncheckAll}
-            className="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-            Uncheck all
-          </button>
-          <button
-            onClick={checkAll}
-            className="text-xs px-3 py-1 rounded-full bg-green-100 text-green-700 hover:bg-green-200 transition">
-            Check all
-          </button>
+          <button onClick={uncheckAll} className="text-xs px-3 py-1 rounded-full bg-gray-100 text-gray-600 hover:bg-gray-200 transition">Uncheck all</button>
         </div>
       </div>
 
-      {/* Store selector */}
-      <div className="flex gap-2 mb-6">
+      {/* Mode Selector */}
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <button onClick={() => setMode('manual')}
+          className={`p-4 rounded-2xl border-2 text-left transition ${mode === 'manual' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'}`}>
+          <p className="font-bold text-gray-800 text-sm">👤 Manual Selection</p>
+          <p className="text-xs text-gray-500 mt-1">You choose which items to include in your order</p>
+        </button>
+        <button onClick={() => setMode('ai')}
+          className={`p-4 rounded-2xl border-2 text-left transition ${mode === 'ai' ? 'border-purple-500 bg-purple-50' : 'border-gray-200 hover:border-purple-300'}`}>
+          <p className="font-bold text-gray-800 text-sm">🤖 AI Smart Selection</p>
+          <p className="text-xs text-gray-500 mt-1">AI picks items for max nutrition within your budget</p>
+        </button>
+      </div>
+
+      {/* AI Mode Controls */}
+      {mode === 'ai' && (
+        <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 mb-5">
+          <p className="text-sm text-purple-700 font-semibold mb-3">🤖 AI will select items prioritising: protein sources → vegetables → grains → fats, within a ~€50 weekly budget</p>
+          <div className="flex gap-2">
+            <button onClick={handleAISelect} disabled={aiSelecting}
+              className="bg-purple-600 text-white text-sm font-bold px-4 py-2 rounded-full hover:bg-purple-700 transition disabled:opacity-50">
+              {aiSelecting ? '⏳ Selecting...' : '✨ Let AI Choose'}
+            </button>
+            <button onClick={deselectAll} className="bg-gray-100 text-gray-600 text-sm font-bold px-4 py-2 rounded-full hover:bg-gray-200 transition">
+              Clear Selection
+            </button>
+            <button onClick={selectAll} className="bg-gray-100 text-gray-600 text-sm font-bold px-4 py-2 rounded-full hover:bg-gray-200 transition">
+              Select All
+            </button>
+          </div>
+          {selectedItems.length > 0 && (
+            <p className="text-xs text-purple-600 mt-2 font-semibold">
+              ✅ {selectedItems.length} items selected · Estimated total: €{getTotalForStore(activeStore)} at {activeStore}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* Store Selector */}
+      <div className="flex gap-2 mb-4 flex-wrap">
         {stores.map((store, i) => (
-          <button
-            key={i}
-            onClick={() => setActiveStore(store)}
-            className={`px-4 py-2 rounded-full text-sm font-semibold transition
-              ${activeStore === store
-                ? 'bg-green-600 text-white'
-                : 'bg-gray-100 text-gray-600 hover:bg-green-50'}`}>
+          <button key={i} onClick={() => setActiveStore(store)}
+            className={`px-4 py-2 rounded-full text-sm font-semibold transition ${activeStore === store ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-50'}`}>
             🏪 {store}
           </button>
         ))}
+        {stores.length > 1 && (
+          <button onClick={() => setShowComparison(true)}
+            className="px-4 py-2 rounded-full text-sm font-semibold transition bg-blue-50 text-blue-700 hover:bg-blue-100">
+            📊 Compare Prices
+          </button>
+        )}
       </div>
 
-      {/* Progress bar */}
-      <div className="bg-white rounded-2xl p-4 shadow-sm mb-6">
+      {/* Progress */}
+      <div className="bg-white rounded-2xl p-4 shadow-sm mb-4">
         <div className="flex justify-between text-sm mb-2">
           <span className="font-semibold text-gray-700">Shopping Progress</span>
           <span className="font-bold text-green-700">{checkedItems} / {totalItems} items</span>
         </div>
         <div className="w-full bg-gray-100 rounded-full h-3">
-          <div
-            className="bg-green-500 h-3 rounded-full transition-all duration-500"
-            style={{ width: `${progress}%` }}
-          />
+          <div className="bg-green-500 h-3 rounded-full transition-all duration-500" style={{ width: `${progress}%` }} />
         </div>
-        {progress === 100 && (
-          <p className="text-green-600 text-sm font-bold mt-2 text-center">
-            🎉 All items collected!
-          </p>
-        )}
+        {progress === 100 && <p className="text-green-600 text-sm font-bold mt-2 text-center">🎉 All items collected!</p>}
       </div>
 
-      {/* Weekly cost estimate */}
+      {/* Cost estimate */}
       <div className="bg-green-50 border border-green-200 rounded-2xl p-4 mb-6 flex items-center justify-between">
         <div>
           <p className="font-bold text-green-800">💰 Weekly Grocery Estimate</p>
-          <p className="text-green-600 text-sm">Based on average prices at {activeStore}</p>
+          <p className="text-green-600 text-sm">
+            {selectedItems.length > 0 ? `${selectedItems.length} selected items` : 'Full list'} at {activeStore}
+            {activeStore === cheapestStore && stores.length > 1 && <span className="ml-1 bg-green-200 text-green-800 text-xs px-1 rounded">Cheapest</span>}
+          </p>
         </div>
         <div className="text-right">
-          <p className="text-3xl font-extrabold text-green-700">~€{aiMealPlan ? '48' : '35'}</p>
+          <p className="text-3xl font-extrabold text-green-700">~€{getTotalForStore(activeStore)}</p>
           <p className="text-green-500 text-xs">per week</p>
         </div>
       </div>
 
-      {/* Shopping items by category */}
+      {/* Items by category */}
       {CATEGORY_ORDER.filter(cat => grouped[cat]).map(category => (
         <div key={category} className="bg-white rounded-2xl shadow-sm mb-4 overflow-hidden">
-          {/* Category header */}
           <div className="flex items-center gap-3 px-5 py-3 bg-gray-50 border-b border-gray-100">
             <span className="text-xl">{CATEGORY_ICONS[category]}</span>
             <span className="font-bold text-gray-700">{category}</span>
@@ -231,34 +260,34 @@ export default function ShoppingList({ profile, aiMealPlan }) {
               {grouped[category].filter(i => i.checked).length}/{grouped[category].length}
             </span>
           </div>
-
-          {/* Items */}
           <div className="divide-y divide-gray-50">
             {grouped[category].map((item, i) => {
-              const key = item.name.toLowerCase().trim()
+              const key   = item.name.toLowerCase().trim()
+              const price = getItemPrice(item, activeStore)
               return (
-                <div
-                  key={i}
-                  onClick={() => toggleItem(key)}
-                  className={`flex items-center gap-4 px-5 py-3 cursor-pointer hover:bg-gray-50 transition
-                    ${item.checked ? 'opacity-50' : ''}`}>
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition
-                    ${item.checked
-                      ? 'bg-green-500 border-green-500'
-                      : 'border-gray-300'}`}>
+                <div key={i} className={`flex items-center gap-3 px-5 py-3 transition ${item.checked ? 'opacity-50' : 'hover:bg-gray-50'}`}>
+                  {/* Check circle */}
+                  <div onClick={() => toggleItem(key)}
+                    className={`w-5 h-5 rounded-full border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition
+                      ${item.checked ? 'bg-green-500 border-green-500' : 'border-gray-300'}`}>
                     {item.checked && <span className="text-white text-xs">✓</span>}
                   </div>
+
+                  {/* Select checkbox (for comparison/ordering) */}
+                  {(mode === 'ai' || showComparison) && (
+                    <div onClick={() => toggleSelect(key)}
+                      className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 cursor-pointer transition
+                        ${item.selected ? 'bg-blue-500 border-blue-500' : 'border-gray-300'}`}>
+                      {item.selected && <span className="text-white text-xs">✓</span>}
+                    </div>
+                  )}
+
                   <span className={`text-sm flex-1 ${item.checked ? 'line-through text-gray-400' : 'text-gray-700'}`}>
                     {item.name}
                   </span>
-                  {item.days > 1 && (
-                    <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
-                      {item.days}x week
-                    </span>
-                  )}
-                  <span className="text-xs text-green-600 font-semibold">
-                    {activeStore}
-                  </span>
+                  {item.count > 1 && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{item.count}x week</span>}
+                  <span className="text-xs text-gray-500">€{price}</span>
+                  <span className="text-xs text-green-600 font-semibold">{activeStore}</span>
                 </div>
               )
             })}
@@ -269,26 +298,108 @@ export default function ShoppingList({ profile, aiMealPlan }) {
       {/* Order button */}
       <div className="mt-6 bg-gray-800 rounded-2xl p-5 text-center">
         <p className="text-white font-bold mb-2">Ready to order?</p>
-        <p className="text-gray-400 text-sm mb-4">
-          Open {activeStore} online shop and add your items
-        </p>
+        <p className="text-gray-400 text-sm mb-4">Open {activeStore} online shop and add your items</p>
         <button
           onClick={() => {
-            const storeUrls = {
-              'Lidl':     'https://www.lidl.sk',
-              'Kaufland': 'https://www.kaufland.sk',
-              'Billa':    'https://www.billa.sk',
-              'Tesco':    'https://www.tesco.com',
-              'Spar':     'https://www.spar.sk',
-              'Aldi':     'https://www.aldi.sk',
-              'Penny':    'https://www.penny.sk',
-            }
-            window.open(storeUrls[activeStore] || 'https://www.google.com/search?q=' + activeStore + '+online+shop', '_blank')
+            const urls = { 'Lidl': 'https://www.lidl.sk', 'Kaufland': 'https://www.kaufland.sk', 'Billa': 'https://www.billa.sk', 'Tesco': 'https://www.tesco.com', 'Spar': 'https://www.spar.sk', 'Aldi': 'https://www.aldi.sk', 'Penny': 'https://www.penny.sk' }
+            window.open(urls[activeStore] || `https://www.google.com/search?q=${activeStore}+online+shop`, '_blank')
           }}
           className="bg-green-500 text-white font-bold px-8 py-3 rounded-full hover:bg-green-400 transition">
           🛒 Go to {activeStore} Online Shop →
         </button>
       </div>
+
+      {/* Price Comparison Modal */}
+      {showComparison && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-lg w-full max-h-screen overflow-y-auto">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-xl font-extrabold text-gray-800">📊 Price Comparison</h3>
+              <button onClick={() => setShowComparison(false)} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">×</button>
+            </div>
+            <p className="text-sm text-gray-500 mb-4">
+              {selectedItems.length > 0 ? `Comparing ${selectedItems.length} selected items` : `Comparing all ${totalItems} items`} across your stores
+            </p>
+
+            {/* Store comparison */}
+            <div className="space-y-3 mb-4">
+              {stores.map((store, i) => {
+                const total = parseFloat(getTotalForStore(store))
+                const isCheapest = store === cheapestStore
+                return (
+                  <div key={i} className={`rounded-2xl p-4 border-2 ${isCheapest ? 'border-green-400 bg-green-50' : 'border-gray-200'}`}>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-gray-800">{store}</span>
+                        {isCheapest && <span className="text-xs bg-green-200 text-green-800 px-2 py-0.5 rounded-full font-bold">Cheapest</span>}
+                      </div>
+                      <span className="text-2xl font-extrabold text-green-700">€{total.toFixed(2)}</span>
+                    </div>
+                    <div className="w-full bg-gray-100 rounded-full h-2">
+                      <div className="bg-green-500 h-2 rounded-full"
+                        style={{ width: `${Math.min((parseFloat(getTotalForStore(stores[0])) / total) * 80, 100)}%` }} />
+                    </div>
+                    {isCheapest && (
+                      <p className="text-xs text-green-600 mt-1 font-semibold">
+                        Save €{(Math.max(...stores.map(s => parseFloat(getTotalForStore(s)))) - total).toFixed(2)} vs most expensive
+                      </p>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Item-by-item comparison */}
+            <div className="bg-gray-50 rounded-xl p-3">
+              <p className="text-xs font-bold text-gray-500 uppercase mb-2">Item Price Breakdown</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr>
+                      <th className="text-left py-1 text-gray-500">Item</th>
+                      {stores.map(s => <th key={s} className="text-right py-1 text-gray-500 pl-2">{s}</th>)}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(selectedItems.length > 0 ? selectedItems : itemList).slice(0, 10).map((item, i) => (
+                      <tr key={i} className="border-t border-gray-200">
+                        <td className="py-1 text-gray-700 max-w-28 truncate">{item.name.substring(0, 20)}</td>
+                        {stores.map(s => {
+                          const price = parseFloat(getItemPrice(item, s))
+                          const min   = Math.min(...stores.map(st => parseFloat(getItemPrice(item, st))))
+                          return (
+                            <td key={s} className={`text-right py-1 pl-2 font-semibold ${price === min ? 'text-green-600' : 'text-gray-500'}`}>
+                              €{price.toFixed(2)}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                    {(selectedItems.length > 0 ? selectedItems : itemList).length > 10 && (
+                      <tr><td colSpan={stores.length + 1} className="text-gray-400 text-center py-1">...and {(selectedItems.length > 0 ? selectedItems : itemList).length - 10} more items</td></tr>
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-gray-300">
+                      <td className="py-2 font-bold text-gray-800">Total</td>
+                      {stores.map(s => (
+                        <td key={s} className={`text-right py-2 pl-2 font-extrabold ${s === cheapestStore ? 'text-green-600' : 'text-gray-700'}`}>
+                          €{getTotalForStore(s)}
+                        </td>
+                      ))}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+
+            <button onClick={() => { setActiveStore(cheapestStore); setShowComparison(false) }}
+              className="mt-4 bg-green-600 text-white font-bold px-8 py-3 rounded-full w-full hover:bg-green-700 transition">
+              Switch to {cheapestStore} (Cheapest) →
+            </button>
+          </div>
+        </div>
+      )}
 
     </div>
   )
