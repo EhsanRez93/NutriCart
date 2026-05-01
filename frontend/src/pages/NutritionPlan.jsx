@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import ShoppingList from './ShoppingList'
 import ScoreCard from './ScoreCard'
+import ProgressTracker from './ProgressTracker'
 
 function calculateNutrition(profile) {
   const weight = parseFloat(profile.currentWeight)
@@ -589,6 +590,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             { id: 'flags',     label: `⚠️ Health Flags${activeSymptoms.length > 0 ? ` (${activeSymptoms.length})` : ''}` },
             { id: 'shopping',  label: '🛒 Shopping List' },
             { id: 'score',     label: '🏆 Score Card' },
+            { id: 'progress',  label: '📈 Progress' },
           ].map(tab => (
             <button key={tab.id} onClick={() => setActiveTab(tab.id)}
               className={`py-3 text-sm font-semibold border-b-2 transition whitespace-nowrap
@@ -1007,7 +1009,9 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         )}
 
         {activeTab === 'shopping' && <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />}
-
+        {activeTab === 'progress' && (
+          <ProgressTracker profile={profile} userId={userId} />
+        )}
         {activeTab === 'score' && (
           <ScoreCard profile={profile} aiMealPlan={aiMealPlan} actualIntake={actualIntake}
             eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />
