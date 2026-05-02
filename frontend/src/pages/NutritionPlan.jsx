@@ -328,6 +328,50 @@ function StartDateModal({ onConfirm, onClose }) {
   )
 }
 
+function InsightCard({ insight }) {
+  const cat = (insight.category || 'habit').toLowerCase()
+  const palette = {
+    energy:    { bg: 'bg-yellow-50',   border: 'border-yellow-200',   chip: 'bg-yellow-100 text-yellow-700',   header: 'text-yellow-800' },
+    weight:    { bg: 'bg-blue-50',     border: 'border-blue-200',     chip: 'bg-blue-100 text-blue-700',       header: 'text-blue-800' },
+    adherence: { bg: 'bg-green-50',    border: 'border-green-200',    chip: 'bg-green-100 text-green-700',     header: 'text-green-800' },
+    macros:    { bg: 'bg-orange-50',   border: 'border-orange-200',   chip: 'bg-orange-100 text-orange-700',   header: 'text-orange-800' },
+    symptoms:  { bg: 'bg-red-50',      border: 'border-red-200',      chip: 'bg-red-100 text-red-700',         header: 'text-red-800' },
+    habit:     { bg: 'bg-purple-50',   border: 'border-purple-200',   chip: 'bg-purple-100 text-purple-700',   header: 'text-purple-800' },
+    sleep:     { bg: 'bg-indigo-50',   border: 'border-indigo-200',   chip: 'bg-indigo-100 text-indigo-700',   header: 'text-indigo-800' },
+    mood:      { bg: 'bg-pink-50',     border: 'border-pink-200',     chip: 'bg-pink-100 text-pink-700',       header: 'text-pink-800' },
+  }
+  const c = palette[cat] || palette.habit
+  const conf = Math.max(1, Math.min(5, parseInt(insight.confidence, 10) || 3))
+  return (
+    <div className={`rounded-2xl p-5 border-2 ${c.bg} ${c.border} shadow-sm`}>
+      <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
+          <span className="text-3xl flex-shrink-0">{insight.icon || '💡'}</span>
+          <h3 className={`font-extrabold text-base ${c.header}`}>{insight.headline}</h3>
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${c.chip} capitalize`}>{cat}</span>
+          <span className="text-xs font-bold text-gray-400" title={`Confidence: ${conf}/5`}>
+            {'★'.repeat(conf)}{'☆'.repeat(5 - conf)}
+          </span>
+        </div>
+      </div>
+      {insight.evidence && (
+        <p className="text-sm text-gray-700 mb-3 leading-relaxed">
+          <span className="font-bold">📊 Evidence: </span>{insight.evidence}
+        </p>
+      )}
+      {insight.recommendation && (
+        <div className="bg-white rounded-xl p-3 border border-gray-100">
+          <p className="text-sm text-gray-700 leading-relaxed">
+            <span className="font-bold text-gray-800">💪 Try this: </span>{insight.recommendation}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DayPopup({ dayIndex, aiMealPlan, eatenMeals, skippedMeals, startDate }) {
   const dayKey  = `day-${dayIndex}`
   const meals   = aiMealPlan?.days[dayIndex]?.meals || []
@@ -379,6 +423,18 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [upcomingHols, setUpcomingHols]     = useState([])   // next 3 upcoming holidays
   const [calendarHolidays, setCalendarHolidays] = useState([]) // holidays for the calendar display range
 
+  // ── v13.0 Insights state ──
+  const [insights, setInsights]                 = useState(profile.cachedInsights?.insights || [])
+  const [insightsStats, setInsightsStats]       = useState(profile.cachedInsights?.stats || null)
+  const [insightsGeneratedAt, setInsightsGenAt] = useState(profile.insightsGeneratedAt || null)
+  const [insightsLoading, setInsightsLoading]   = useState(false)
+  const [insightsError, setInsightsError]       = useState(null)
+  const [allMealLogs, setAllMealLogs]           = useState([])   // last 30 days
+  const [allWeightLogs, setAllWeightLogs]       = useState([])   // last 30 days
+  const [allCheckins, setAllCheckins]           = useState([])   // last 30 days
+  const [todayCheckin, setTodayCheckin]         = useState(null) // today's check-in row, if any
+  const [checkinSaving, setCheckinSaving]       = useState(false)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -425,7 +481,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       const planEnd   = addDays(startDate, 6)
       const { data, error } = await supabase
         .from('meal_logs')
-        select('*')
+        .select('*')
         .eq('user_id', userId)
         .gte('log_date', planStart)
         .lte('log_date', planEnd)
@@ -448,6 +504,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       }
     }
     loadLogs()
+  }, [userId, startDate])
+
+  // ── v13.0: Load last 30 days of data for Insights ──
+  useEffect(() => {
+    if (!userId) return
+    const today  = getTodayStr()
+    const since  = addDays(today, -30)
+    async function loadAll() {
+      const [{ data: meals }, { data: weights }, { data: checks }, { data: todayRow }] = await Promise.all([
+        supabase.from('meal_logs').select('*').eq('user_id', userId).gte('log_date', since).order('log_date', { ascending: true }),
+        supabase.from('weight_logs').select('*').eq('user_id', userId).gte('log_date', since).order('log_date', { ascending: true }),
+        supabase.from('daily_checkins').select('*').eq('user_id', userId).gte('checkin_date', since).order('checkin_date', { ascending: true }),
+        supabase.from('daily_checkins').select('*').eq('user_id', userId).eq('checkin_date', today).maybeSingle(),
+      ])
+      setAllMealLogs(meals || [])
+      setAllWeightLogs(weights || [])
+      setAllCheckins(checks || [])
+      setTodayCheckin(todayRow || null)
+    }
+    loadAll().catch(err => console.warn('insights data load failed:', err.message))
   }, [userId])
 
   // ── Auto set active day ──
@@ -609,6 +685,64 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setSwapMeal(null); setAlternatives([])
   }
 
+  // ── v13.0: Daily check-in widget ──
+  async function saveCheckin(field, value) {
+    if (!userId) return
+    setCheckinSaving(true)
+    const today = getTodayStr()
+    const next  = { ...(todayCheckin || { user_id: userId, checkin_date: today }), [field]: value }
+    setTodayCheckin(next) // optimistic
+    const { data, error } = await supabase
+      .from('daily_checkins')
+      .upsert({ user_id: userId, checkin_date: today, ...next, updated_at: new Date().toISOString() }, { onConflict: 'user_id,checkin_date' })
+      .select()
+      .maybeSingle()
+    if (data && !error) {
+      setTodayCheckin(data)
+      setAllCheckins(prev => {
+        const without = prev.filter(c => c.checkin_date !== today)
+        return [...without, data].sort((a, b) => a.checkin_date.localeCompare(b.checkin_date))
+      })
+    }
+    setCheckinSaving(false)
+  }
+
+  // ── v13.0: Generate insights ──
+  async function refreshInsights() {
+    setInsightsLoading(true)
+    setInsightsError(null)
+    try {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/insights', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile,
+          mealLogs:   allMealLogs,
+          weightLogs: allWeightLogs,
+          checkins:   allCheckins,
+        }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setInsights(data.insights || [])
+        setInsightsStats(data.stats || null)
+        setInsightsGenAt(data.generatedAt || new Date().toISOString())
+        // Persist to profile so they show on next login
+        if (userId) {
+          await supabase.from('profiles').update({
+            cached_insights:       { insights: data.insights, stats: data.stats, hint: data.hint },
+            insights_generated_at: new Date().toISOString(),
+          }).eq('id', userId)
+        }
+      } else {
+        setInsightsError(data.error || 'Could not generate insights right now.')
+      }
+    } catch (err) {
+      setInsightsError('Backend not reachable.')
+    } finally {
+      setInsightsLoading(false)
+    }
+  }
+
   function getWeekDays(offset = 0) {
     const base = startDate || getTodayStr()
     return Array.from({ length: 7 }, (_, i) => ({ date: addDays(base, i + offset * 7), index: i }))
@@ -671,6 +805,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             { id: 'dashboard', label: '📊 Dashboard' },
             { id: 'meals',     label: '🍽️ Meal Plan' },
             { id: 'week',      label: '📅 Weekly View' },
+            { id: 'insights',  label: '💡 Insights' },
             { id: 'flags',     label: `⚠️ Health Flags${activeSymptoms.length > 0 ? ` (${activeSymptoms.length})` : ''}` },
             { id: 'shopping',  label: '🛒 Shopping List' },
             { id: 'score',     label: '🏆 Score Card' },
@@ -717,6 +852,62 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             )}
 
             <IntakeTracker eaten={actualIntake} targets={nutrition} />
+
+            {/* v13.0 Daily Check-in widget */}
+            <div className="bg-white rounded-2xl p-5 shadow-sm mb-6 border border-purple-100">
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <h3 className="font-bold text-gray-800">📝 Daily check-in</h3>
+                <div className="flex items-center gap-2">
+                  {todayCheckin && <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">✓ Today logged</span>}
+                  <button onClick={() => setActiveTab('insights')}
+                    className="text-xs bg-purple-50 text-purple-700 font-bold px-3 py-1 rounded-full hover:bg-purple-100 transition">
+                    💡 See insights →
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3">
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">⚡ Energy</p>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5].map(n => (
+                      <button key={n} disabled={checkinSaving} onClick={() => saveCheckin('energy', n)}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${todayCheckin?.energy === n ? 'bg-yellow-400 text-white border-yellow-500' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-yellow-50'}`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">😊 Mood</p>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5].map(n => (
+                      <button key={n} disabled={checkinSaving} onClick={() => saveCheckin('mood', n)}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${todayCheckin?.mood === n ? 'bg-pink-400 text-white border-pink-500' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-pink-50'}`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 mb-1.5">😴 Sleep</p>
+                  <div className="flex gap-1">
+                    {[1,2,3,4,5].map(n => (
+                      <button key={n} disabled={checkinSaving} onClick={() => saveCheckin('sleep', n)}
+                        className={`flex-1 py-2 rounded-lg text-sm font-bold transition border ${todayCheckin?.sleep === n ? 'bg-indigo-400 text-white border-indigo-500' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-indigo-50'}`}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-between flex-wrap gap-2">
+                <button onClick={() => saveCheckin('brain_fog', !todayCheckin?.brain_fog)} disabled={checkinSaving}
+                  className={`text-xs font-bold px-3 py-1.5 rounded-full border transition ${todayCheckin?.brain_fog ? 'bg-purple-100 text-purple-700 border-purple-300' : 'bg-gray-50 text-gray-500 border-gray-200 hover:bg-purple-50'}`}>
+                  🧠 Brain fog{todayCheckin?.brain_fog ? ': yes' : '?'}
+                </button>
+                <p className="text-xs text-gray-400">1 = poor · 5 = excellent. Builds your insights over time.</p>
+              </div>
+            </div>
 
             {/* Upcoming holidays card */}
             {upcomingHols.length > 0 && (
@@ -1111,6 +1302,87 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 ~€45–55 at {Array.isArray(profile.store) ? profile.store[0] : profile.store}
               </p>
             </div>
+          </div>
+        )}
+
+        {/* ══ INSIGHTS ══ (v13.0) */}
+        {activeTab === 'insights' && (
+          <div>
+            <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
+              <div>
+                <h2 className="text-3xl font-extrabold text-gray-800">💡 Your Insights</h2>
+                <p className="text-gray-500 mt-1">AI-found patterns from your meal logs, weight trend, energy ratings, and check-ins over the last 30 days.</p>
+                {insightsGeneratedAt && (
+                  <p className="text-xs text-gray-400 mt-1">Last updated: {new Date(insightsGeneratedAt).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}</p>
+                )}
+              </div>
+              <button onClick={refreshInsights} disabled={insightsLoading}
+                className="flex items-center gap-2 px-6 py-3 rounded-full font-bold text-white transition shadow-lg disabled:opacity-60"
+                style={{ background: insightsLoading ? '#9ca3af' : 'linear-gradient(to right, #7c3aed, #4f46e5)' }}>
+                {insightsLoading ? <><span>⏳</span> Analyzing…</> : <>✨ {insights.length > 0 ? 'Refresh insights' : 'Generate insights'}</>}
+              </button>
+            </div>
+
+            {insightsError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-6 text-sm">⚠️ {insightsError}</div>
+            )}
+
+            {insightsStats && insightsStats.sampleDays > 0 && (
+              <div className="grid grid-cols-4 gap-3 mb-6">
+                {[
+                  { label: 'Days logged', value: insightsStats.sampleDays, color: 'text-purple-700' },
+                  { label: 'Avg adherence', value: insightsStats.overallAdherencePct ? `${Math.round(insightsStats.overallAdherencePct)}%` : '—', color: 'text-green-700' },
+                  { label: 'Avg energy', value: insightsStats.avgEnergy ? `${insightsStats.avgEnergy.toFixed(1)}/5` : '—', color: 'text-yellow-600' },
+                  { label: 'Skip rate', value: typeof insightsStats.skipRate === 'number' ? `${insightsStats.skipRate}%` : '—', color: 'text-orange-600' },
+                ].map((s, i) => (
+                  <div key={i} className="bg-white rounded-2xl p-4 shadow-sm text-center">
+                    <p className="text-xs text-gray-400 font-semibold uppercase">{s.label}</p>
+                    <p className={`text-2xl font-extrabold mt-1 ${s.color}`}>{s.value}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {insights.length === 0 && !insightsLoading && (
+              <div className="bg-purple-50 rounded-2xl p-10 text-center border border-purple-100">
+                <p className="text-5xl mb-3">💡</p>
+                <p className="font-bold text-purple-800 text-lg mb-1">No insights yet</p>
+                {insightsStats && insightsStats.sampleDays < 3 ? (
+                  <p className="text-purple-700 text-sm">Log meals on at least 3 days to unlock your first insights. Currently: <span className="font-bold">{insightsStats.sampleDays}</span> day(s).</p>
+                ) : (
+                  <p className="text-purple-700 text-sm">Click <span className="font-bold">Generate insights</span> above to have the AI analyze your last 30 days.</p>
+                )}
+                <div className="mt-4 inline-block text-left bg-white rounded-xl p-4 text-xs text-gray-600 shadow-sm">
+                  <p className="font-bold text-gray-700 mb-2">What you'll see:</p>
+                  <ul className="space-y-1">
+                    <li>⚡ Whether skipping breakfast affects your energy</li>
+                    <li>🎯 Where your adherence drops (e.g. weekends)</li>
+                    <li>⚖️ How your weight trend matches the plan</li>
+                    <li>🥩 Macro patterns linked to how you feel</li>
+                    <li>🧠 Brain-fog days vs nutrition</li>
+                  </ul>
+                </div>
+              </div>
+            )}
+
+            {insightsLoading && (
+              <div className="bg-white rounded-2xl p-10 text-center shadow-sm">
+                <div className="text-5xl mb-3 animate-pulse">🤖</div>
+                <p className="font-bold text-gray-700">Analyzing 30 days of your data…</p>
+                <p className="text-sm text-gray-400 mt-1">Looking for patterns across meals, weight, energy, and check-ins.</p>
+              </div>
+            )}
+
+            {insights.length > 0 && (
+              <div className="space-y-4">
+                {insights.map((ins, i) => (
+                  <InsightCard key={i} insight={ins} />
+                ))}
+                <p className="text-xs text-gray-400 text-center mt-2">
+                  Insights are generated by AI from your data. Always pair with your own judgment — and a real doctor for medical decisions.
+                </p>
+              </div>
+            )}
           </div>
         )}
 

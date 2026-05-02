@@ -60,6 +60,8 @@ export default function App() {
         savedMealPlan:     data.saved_meal_plan || null,
         mealPlanStartDate: data.meal_plan_start_date || null,
         planGeneratedAt:   data.plan_generated_at || null,
+        cachedInsights:    data.cached_insights || null,
+        insightsGeneratedAt: data.insights_generated_at || null,
       }
       setUserProfile(profile)
       setPage('plan')

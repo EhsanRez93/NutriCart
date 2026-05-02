@@ -201,6 +201,225 @@ Respond ONLY with valid JSON, no other text:
   }
 })
 
+// ── Insights helpers (pre-compute stats so AI grounds claims in real numbers) ──
+function dayOfWeek(dateStr) {
+  return new Date(dateStr).getDay() // 0 = Sunday
+}
+
+function isWeekend(dateStr) {
+  const d = dayOfWeek(dateStr)
+  return d === 0 || d === 6
+}
+
+function computeInsightStats({ profile, mealLogs, weightLogs, checkins }) {
+  const meals    = Array.isArray(mealLogs)   ? mealLogs   : []
+  const weights  = Array.isArray(weightLogs) ? weightLogs : []
+  const checks   = Array.isArray(checkins)   ? checkins   : []
+
+  const eaten   = meals.filter(m => !m.skipped)
+  const skipped = meals.filter(m =>  m.skipped)
+
+  // Per-day rollups
+  const byDate = {}
+  for (const m of meals) {
+    const d = m.log_date
+    if (!byDate[d]) byDate[d] = { date: d, eaten: [], skipped: [], totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 }
+    if (m.skipped) byDate[d].skipped.push(m)
+    else {
+      byDate[d].eaten.push(m)
+      byDate[d].totalCalories += +m.calories || 0
+      byDate[d].totalProtein  += +m.protein  || 0
+      byDate[d].totalCarbs    += +m.carbs    || 0
+      byDate[d].totalFats     += +m.fats     || 0
+    }
+  }
+  for (const w of weights) {
+    if (!byDate[w.log_date]) byDate[w.log_date] = { date: w.log_date, eaten: [], skipped: [], totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 }
+    byDate[w.log_date].weight       = +w.weight       || null
+    byDate[w.log_date].energyLevel  = +w.energy_level || null
+    byDate[w.log_date].notes        = w.notes || ''
+  }
+  for (const c of checks) {
+    if (!byDate[c.checkin_date]) byDate[c.checkin_date] = { date: c.checkin_date, eaten: [], skipped: [], totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 }
+    byDate[c.checkin_date].mood       = +c.mood        || null
+    byDate[c.checkin_date].sleep      = +c.sleep       || null
+    byDate[c.checkin_date].brainFog   = !!c.brain_fog
+    byDate[c.checkin_date].energyLevel = byDate[c.checkin_date].energyLevel ?? (+c.energy || null)
+  }
+
+  const days = Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date))
+  const daysWithMeals    = days.filter(d => d.eaten.length > 0)
+  const daysWithEnergy   = days.filter(d => typeof d.energyLevel === 'number')
+  const daysSkippedBkfst = daysWithMeals.filter(d => !d.eaten.some(m => /breakfast/i.test(m.meal_name) || (m.meal && /breakfast/i.test(m.meal))))
+
+  function avg(arr) { return arr.length ? arr.reduce((s, x) => s + x, 0) / arr.length : null }
+
+  const goalCalories = +profile?.calories || 0
+  const goalProtein  = +profile?.protein  || 0
+
+  // Weekend vs weekday adherence
+  const weekendDays = daysWithMeals.filter(d => isWeekend(d.date))
+  const weekdayDays = daysWithMeals.filter(d => !isWeekend(d.date))
+  const weekendAdh  = goalCalories ? avg(weekendDays.map(d => (d.totalCalories / goalCalories) * 100)) : null
+  const weekdayAdh  = goalCalories ? avg(weekdayDays.map(d => (d.totalCalories / goalCalories) * 100)) : null
+
+  // Skip-breakfast vs full breakfast → energy comparison
+  const energyOnSkippedBkfst = avg(daysSkippedBkfst.filter(d => typeof d.energyLevel === 'number').map(d => d.energyLevel))
+  const energyOnFullBkfst    = avg(daysWithMeals
+    .filter(d => !daysSkippedBkfst.includes(d) && typeof d.energyLevel === 'number')
+    .map(d => d.energyLevel))
+
+  // Protein quartile vs energy
+  const proteinDays = daysWithMeals.filter(d => d.totalProtein > 0 && typeof d.energyLevel === 'number')
+  const sortedByProtein = [...proteinDays].sort((a, b) => a.totalProtein - b.totalProtein)
+  const cutoff = Math.floor(sortedByProtein.length * 0.5)
+  const lowProtein  = sortedByProtein.slice(0, cutoff)
+  const highProtein = sortedByProtein.slice(-cutoff)
+  const energyLowProtein  = avg(lowProtein.map(d => d.energyLevel))
+  const energyHighProtein = avg(highProtein.map(d => d.energyLevel))
+
+  // Weight trend (if at least 2 weighings)
+  const weightSeries = weights.map(w => ({ date: w.log_date, weight: +w.weight })).filter(w => !!w.weight).sort((a,b)=>a.date.localeCompare(b.date))
+  let weightTrend = null
+  if (weightSeries.length >= 2) {
+    const first = weightSeries[0]
+    const last  = weightSeries[weightSeries.length - 1]
+    const days  = (new Date(last.date) - new Date(first.date)) / 86400000
+    weightTrend = { firstDate: first.date, firstWeight: first.weight, lastDate: last.date, lastWeight: last.weight, deltaKg: +(last.weight - first.weight).toFixed(2), days, target: +profile?.targetWeight || null }
+  }
+
+  // Skip rate
+  const skipRate = meals.length ? skipped.length / meals.length : 0
+
+  // Top eaten meals (by frequency)
+  const mealFreq = {}
+  for (const m of eaten) {
+    const k = m.meal_name
+    mealFreq[k] = (mealFreq[k] || 0) + 1
+  }
+  const topMeals = Object.entries(mealFreq).sort((a, b) => b[1] - a[1]).slice(0, 5)
+
+  // Brain fog incidence vs nutrition (if checkins present)
+  const fogDays = days.filter(d => d.brainFog === true && d.totalCalories > 0)
+  const okDays  = days.filter(d => d.brainFog === false && d.totalCalories > 0)
+  const fogCarbs = avg(fogDays.map(d => d.totalCarbs))
+  const okCarbs  = avg(okDays.map(d => d.totalCarbs))
+
+  return {
+    sampleDays:                daysWithMeals.length,
+    daysWithEnergy:            daysWithEnergy.length,
+    daysWithCheckins:          checks.length,
+    avgDailyCalories:          avg(daysWithMeals.map(d => d.totalCalories)),
+    avgDailyProtein:           avg(daysWithMeals.map(d => d.totalProtein)),
+    avgDailyCarbs:             avg(daysWithMeals.map(d => d.totalCarbs)),
+    avgDailyFats:              avg(daysWithMeals.map(d => d.totalFats)),
+    goalCalories,
+    goalProtein,
+    overallAdherencePct:       goalCalories ? avg(daysWithMeals.map(d => (d.totalCalories / goalCalories) * 100)) : null,
+    weekendAdherencePct:       weekendAdh,
+    weekdayAdherencePct:       weekdayAdh,
+    skipRate:                  +(skipRate * 100).toFixed(1),
+    avgEnergy:                 avg(daysWithEnergy.map(d => d.energyLevel)),
+    energyOnSkippedBkfst,
+    energyOnFullBkfst,
+    energyHighProtein,
+    energyLowProtein,
+    weightTrend,
+    topMeals,
+    fogCarbs,
+    okCarbs,
+    symptoms:                  Array.isArray(profile?.symptoms) ? profile.symptoms : [],
+  }
+}
+
+// ── Insights Route ───────────────────────────────────
+app.post('/api/insights', async (req, res) => {
+  try {
+    const { profile = {}, mealLogs = [], weightLogs = [], checkins = [] } = req.body || {}
+    const client = getGroqClient()
+
+    const stats = computeInsightStats({ profile, mealLogs, weightLogs, checkins })
+
+    // Not enough data — return empty list with a friendly hint, not an error
+    if (stats.sampleDays < 3) {
+      return res.json({
+        success: true,
+        insights: [],
+        stats,
+        hint: `Log meals on at least 3 days to unlock insights (currently ${stats.sampleDays}).`,
+      })
+    }
+
+    const prompt = `You are a behavioral nutritionist AI. Analyze this user's data and produce 3-5 actionable insights.
+
+USER PROFILE:
+- Goal: ${profile.goal || 'unspecified'}
+- Current weight: ${profile.currentWeight}kg → target ${profile.targetWeight}kg
+- Reported symptoms: ${(stats.symptoms || []).join(', ') || 'none'}
+- Daily targets: ${stats.goalCalories} kcal / ${stats.goalProtein}g protein
+
+PRE-COMPUTED STATS (use these — do NOT invent numbers):
+- Sample size: ${stats.sampleDays} days with meal logs, ${stats.daysWithEnergy} with energy ratings, ${stats.daysWithCheckins} daily check-ins
+- Average intake: ${Math.round(stats.avgDailyCalories || 0)} kcal · ${Math.round(stats.avgDailyProtein || 0)}g protein · ${Math.round(stats.avgDailyCarbs || 0)}g carbs · ${Math.round(stats.avgDailyFats || 0)}g fats
+- Adherence: ${stats.overallAdherencePct ? Math.round(stats.overallAdherencePct) : 'n/a'}% of daily goal on average
+- Weekend adherence: ${stats.weekendAdherencePct ? Math.round(stats.weekendAdherencePct) : 'n/a'}%, Weekday: ${stats.weekdayAdherencePct ? Math.round(stats.weekdayAdherencePct) : 'n/a'}%
+- Skip rate: ${stats.skipRate}% of logged meals
+- Average energy (1-5): ${stats.avgEnergy ? stats.avgEnergy.toFixed(2) : 'n/a'}
+- Energy on days breakfast was skipped: ${stats.energyOnSkippedBkfst ? stats.energyOnSkippedBkfst.toFixed(2) : 'n/a'} (vs. full-breakfast days: ${stats.energyOnFullBkfst ? stats.energyOnFullBkfst.toFixed(2) : 'n/a'})
+- Energy on high-protein days (top half): ${stats.energyHighProtein ? stats.energyHighProtein.toFixed(2) : 'n/a'} (vs. low-protein days: ${stats.energyLowProtein ? stats.energyLowProtein.toFixed(2) : 'n/a'})
+- Weight trend: ${stats.weightTrend ? `${stats.weightTrend.deltaKg >= 0 ? '+' : ''}${stats.weightTrend.deltaKg}kg over ${Math.round(stats.weightTrend.days)} days (${stats.weightTrend.firstWeight}→${stats.weightTrend.lastWeight}kg)` : 'not enough weighings'}
+- Brain fog days avg carbs: ${stats.fogCarbs ? Math.round(stats.fogCarbs) : 'n/a'}g vs clear days: ${stats.okCarbs ? Math.round(stats.okCarbs) : 'n/a'}g
+- Top eaten meals: ${stats.topMeals.map(([n, c]) => `${n} (${c}×)`).join('; ') || 'none'}
+
+INSTRUCTIONS:
+1. Choose the 3-5 MOST INTERESTING patterns from the stats above
+2. Skip stats with insufficient data (n/a or fewer than 3 supporting days)
+3. NEVER invent numbers — only use the stats provided
+4. Each insight needs: a snappy headline, the supporting evidence (cite the actual numbers), a concrete recommendation, a category, and a confidence score (1-5 stars based on sample size)
+
+Respond ONLY with valid JSON, no other text:
+{
+  "insights": [
+    {
+      "headline": "Your energy drops 23% on days you skip breakfast",
+      "evidence": "Energy averaged 2.8/5 on the 4 days you skipped breakfast vs. 3.6/5 on full-breakfast days.",
+      "recommendation": "Try keeping breakfast simple — overnight oats or a smoothie — to test if your morning energy improves.",
+      "category": "energy",
+      "confidence": 3,
+      "icon": "⚡"
+    }
+  ]
+}
+
+Categories must be one of: energy | weight | adherence | macros | symptoms | habit | sleep | mood
+Icons should be a single emoji: ⚡ 🏋️ 🎯 🥩 🩺 🔁 😴 😊 🍳 🧠 🌙 ☀️ 🛒 ⚖️
+Confidence: 1-2 = small sample, 3 = solid trend, 4-5 = strong pattern with many data points
+Headlines must be specific (use real numbers from the stats), not generic ("eat better").`
+
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2000,
+      temperature: 0.4, // Lower temp = more grounded, less creative
+    })
+
+    const responseText = completion.choices[0].message.content
+    const cleanJson    = responseText.replace(/```json|```/g, '').trim()
+    const parsed       = JSON.parse(cleanJson)
+
+    res.json({
+      success:     true,
+      insights:    Array.isArray(parsed.insights) ? parsed.insights : [],
+      stats,
+      generatedAt: new Date().toISOString(),
+    })
+
+  } catch (error) {
+    console.error('Insights error:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── Start Server ─────────────────────────────────────
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
