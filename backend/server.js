@@ -10,7 +10,15 @@ dotenv.config()
 const holidayCache = {}
 
 const app    = express()
-const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
+
+function getGroqClient() {
+  const rawKey = process.env.GROQ_API_KEY || ''
+  const apiKey = rawKey.trim().replace(/^['\"]+|['\"]+$/g, '')
+  if (!apiKey) {
+    throw new Error('Server misconfigured: GROQ_API_KEY is missing in runtime environment')
+  }
+  return new Groq({ apiKey })
+}
 
 app.use(cors())
 app.use(express.json())
@@ -43,6 +51,7 @@ app.get('/api/holidays', async (req, res) => {
 app.post('/api/mealplan', async (req, res) => {
   try {
     const profile = req.body
+    const client = getGroqClient()
 
     const holidays     = Array.isArray(profile.holidays) ? profile.holidays : []
     const holidayMode  = profile.holidayMode || 'normal'
@@ -134,6 +143,7 @@ Rules:
 app.post('/api/swapmeal', async (req, res) => {
   try {
     const { meal, profile } = req.body
+    const client = getGroqClient()
 
     const prompt = `You are a professional nutritionist AI for NutriCart app.
 
