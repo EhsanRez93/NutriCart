@@ -71,9 +71,6 @@ Respond ONLY with a valid JSON object in this exact format, no other text, no ma
   "days": [
     {
       "day": "Monday",
-      "date": "YYYY-MM-DD",
-      "holidayName": "Holiday name or null",
-      "skipDay": false,
       "meals": [
         {
           "meal": "Breakfast",
@@ -99,21 +96,31 @@ Rules:
 - Address these symptoms with specific foods: ${Array.isArray(profile.symptoms) ? profile.symptoms.join(', ') : 'none'}
 - Keep meals realistic and easy to prepare
 - Vary meals across the 7 days
-- For each day set "date" to the actual calendar date (start from ${profile.startDate || 'today'})
-- If a day is a public holiday: set "holidayName" to the holiday name; if mode is "festive" suggest traditional/celebratory foods; if mode is "skip" set "skipDay":true and provide light/minimal meals; if mode is "normal" treat it as any other day
-- Always include "holidayName" (null if not a holiday) and "skipDay" (false if not skipping) on every day
 - Respond with ONLY the JSON, no other text, no backticks`
 
     const completion = await client.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
-      max_tokens: 4000,
+      max_tokens: 6000,
       temperature: 0.7,
     })
 
     const responseText = completion.choices[0].message.content
     const cleanJson    = responseText.replace(/```json|```/g, '').trim()
     const mealPlan     = JSON.parse(cleanJson)
+
+    // Stamp date, holidayName, skipDay server-side
+    const planStart = profile.startDate ? new Date(profile.startDate) : new Date()
+    const holidayMap = {}
+    holidays.forEach(h => { holidayMap[h.date] = h })
+    mealPlan.days = mealPlan.days.map((day, i) => {
+      const d = new Date(planStart)
+      d.setDate(d.getDate() + i)
+      const dateStr   = d.toISOString().split('T')[0]
+      const holiday   = holidayMap[dateStr] || null
+      const skipDay   = holiday && holidayMode === 'skip'
+      return { ...day, date: dateStr, holidayName: holiday ? (holiday.localName || holiday.name) : null, skipDay: !!skipDay }
+    })
 
     res.json({ success: true, mealPlan })
 

@@ -377,6 +377,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [calendarOffset, setCalendarOffset] = useState(0)
   const [planHolidays, setPlanHolidays]     = useState([])   // holidays in current 7-day plan window
   const [upcomingHols, setUpcomingHols]     = useState([])   // next 3 upcoming holidays
+  const [calendarHolidays, setCalendarHolidays] = useState([]) // holidays for the calendar display range
 
   // ── Update clock ──
   useEffect(() => {
@@ -391,6 +392,29 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     fetchHolidaysWindow(profile.country, planStart, 7).then(setPlanHolidays)
     upcomingHolidays(profile.country, 3).then(setUpcomingHols)
   }, [profile.country, startDate])
+
+  // ── Load holidays for calendar display range ──
+  useEffect(() => {
+    if (!profile.country || !countryHasHolidaySupport(profile.country)) return
+    let rangeStart, rangeDays
+    if (calendarView === 'week') {
+      const base = startDate || getTodayStr()
+      const d = new Date(base)
+      d.setDate(d.getDate() + calendarOffset * 7)
+      rangeStart = d.toISOString().split('T')[0]
+      rangeDays  = 7
+    } else if (calendarView === 'month') {
+      const base = new Date(startDate || getTodayStr())
+      base.setMonth(base.getMonth() + calendarOffset)
+      base.setDate(1)
+      rangeStart = base.toISOString().split('T')[0]
+      rangeDays  = 42 // covers full month
+    } else {
+      rangeStart = startDate || getTodayStr()
+      rangeDays  = 7
+    }
+    fetchHolidaysWindow(profile.country, rangeStart, rangeDays).then(setCalendarHolidays)
+  }, [profile.country, startDate, calendarView, calendarOffset])
 
   // ── Load meal logs from Supabase ──
   useEffect(() => {
@@ -803,7 +827,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     {Array.from({ length: 7 }, (_, i) => {
                       const date      = addDays(startDate, i)
                       const isToday   = date === todayStr
-                      const holiday   = findHoliday(planHolidays, date)
+                      const holiday   = findHoliday(calendarHolidays, date)
                       const isSkip    = holiday && (profile.holidayMode || 'festive') === 'skip'
                       return (
                         <Tooltip key={i} content={holiday ? <span>{holiday.localName || holiday.name}</span> : null}>
@@ -1000,7 +1024,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     const active   = dayMeals.filter(m => !skippedD[m.name])
                     const total    = active.reduce((s, m) => s + m.calories, 0)
                     const emoji    = getDayColor(validIdx, day.date)
-                    const holiday  = findHoliday(planHolidays, day.date)
+                    const holiday  = findHoliday(calendarHolidays, day.date)
                     return (
                       <Tooltip key={i} content={
                         holiday
@@ -1040,7 +1064,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       const isToday  = day.date === todayStr
                       const validIdx = day.planDayIndex
                       const emoji    = getDayColor(validIdx, day.date)
-                      const holiday  = findHoliday(planHolidays, day.date)
+                      const holiday  = findHoliday(calendarHolidays, day.date)
                       const dayMeals = validIdx >= 0 ? (aiMealPlan?.days[validIdx]?.meals || []) : []
                       const skippedD = skippedMeals[`day-${validIdx}`] || {}
                       const total    = dayMeals.filter(m => !skippedD[m.name]).reduce((s, m) => s + m.calories, 0)
