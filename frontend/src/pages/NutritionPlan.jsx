@@ -553,7 +553,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setLoading(true); setAiError(null); setShowStartDate(false)
     const planStart = chosenStartDate || startDate
     try {
-      const response = await fetch('https://nutricart-production-55b2.up.railway.app/api/mealplan', {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/mealplan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           ...profile,
@@ -583,7 +583,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   async function handleSwapMeal(meal) {
     setSwapMeal(meal); setSwapLoading(true); setAlternatives([])
     try {
-      const response = await fetch('https://nutricart-production-55b2.up.railway.app/api/swapmeal', {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/swapmeal', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ meal, profile })
       })
