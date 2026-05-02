@@ -2,8 +2,12 @@ const express = require('express')
 const cors    = require('cors')
 const dotenv  = require('dotenv')
 const Groq    = require('groq-sdk')
+const axios   = require('axios')
 
 dotenv.config()
+
+// ── In-memory holiday cache (24 h) ──────────────────
+const holidayCache = {}
 
 const app    = express()
 const client = new Groq({ apiKey: process.env.GROQ_API_KEY })
@@ -15,10 +19,37 @@ app.get('/health', (req, res) => {
   res.json({ status: 'NutriCart backend is running ✅' })
 })
 
+// ── Holidays Route ───────────────────────────────────
+app.get('/api/holidays', async (req, res) => {
+  try {
+    const { country, year } = req.query
+    if (!country || !year) {
+      return res.status(400).json({ success: false, error: 'country and year are required' })
+    }
+    const key = `${country}-${year}`
+    const now = Date.now()
+    if (holidayCache[key] && now - holidayCache[key].fetchedAt < 24 * 60 * 60 * 1000) {
+      return res.json({ success: true, holidays: holidayCache[key].data })
+    }
+    const response = await axios.get(`https://date.nager.at/api/v3/PublicHolidays/${year}/${country}`)
+    holidayCache[key] = { data: response.data, fetchedAt: now }
+    res.json({ success: true, holidays: response.data })
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── Meal Plan Route ──────────────────────────────────
 app.post('/api/mealplan', async (req, res) => {
   try {
     const profile = req.body
+
+    const holidays     = Array.isArray(profile.holidays) ? profile.holidays : []
+    const holidayMode  = profile.holidayMode || 'normal'
+    const holidayLines = holidays.length > 0
+      ? `\nPublic holidays in this plan window: ${holidays.map(h => `${h.date} (${h.localName || h.name})`).join(', ')}
+Holiday handling mode: ${holidayMode} (festive = suggest festive/traditional meals; normal = treat as any day; skip = mark day as rest/skip with skipDay:true)`
+      : ''
 
     const prompt = `You are a professional nutritionist AI for NutriCart app.
 Generate a personalized 7-day meal plan for this user:
@@ -33,13 +64,16 @@ Preferred stores: ${Array.isArray(profile.store) ? profile.store.join(', ') : pr
 Daily calorie target: ${profile.calories} kcal
 Daily protein target: ${profile.protein}g
 Daily carbs target: ${profile.carbs}g
-Daily fats target: ${profile.fats}g
+Daily fats target: ${profile.fats}g${holidayLines}
 
 Respond ONLY with a valid JSON object in this exact format, no other text, no markdown:
 {
   "days": [
     {
       "day": "Monday",
+      "date": "YYYY-MM-DD",
+      "holidayName": "Holiday name or null",
+      "skipDay": false,
       "meals": [
         {
           "meal": "Breakfast",
@@ -65,6 +99,9 @@ Rules:
 - Address these symptoms with specific foods: ${Array.isArray(profile.symptoms) ? profile.symptoms.join(', ') : 'none'}
 - Keep meals realistic and easy to prepare
 - Vary meals across the 7 days
+- For each day set "date" to the actual calendar date (start from ${profile.startDate || 'today'})
+- If a day is a public holiday: set "holidayName" to the holiday name; if mode is "festive" suggest traditional/celebratory foods; if mode is "skip" set "skipDay":true and provide light/minimal meals; if mode is "normal" treat it as any other day
+- Always include "holidayName" (null if not a holiday) and "skipDay" (false if not skipping) on every day
 - Respond with ONLY the JSON, no other text, no backticks`
 
     const completion = await client.chat.completions.create({

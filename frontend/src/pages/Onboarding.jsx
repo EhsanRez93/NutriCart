@@ -47,8 +47,14 @@ const STORE_ICONS = {
   'Other':    '🏪',
 }
 
-// Total steps: basic inputs + goal + symptoms + stores + country
-const EXTRA_STEPS = 4
+const HOLIDAY_MODE_LABELS = {
+  festive: { icon: '🎉', label: 'Festive meals', desc: 'Suggest traditional holiday foods on public holidays' },
+  normal:  { icon: '🍽️', label: 'Normal meals',  desc: 'Treat public holidays like any other day' },
+  skip:    { icon: '⊘',  label: 'Rest day',      desc: 'Mark public holidays as light / rest days' },
+}
+
+// Total steps: basic inputs + goal + symptoms + stores + country + holiday mode
+const EXTRA_STEPS = 5
 
 export default function Onboarding({ onComplete }) {
   const [step, setStep]       = useState(0)
@@ -71,6 +77,16 @@ export default function Onboarding({ onComplete }) {
       updated.store = value
     } else if (step === steps.length + 3) {
       updated.country = value
+      // If 'Other', skip holiday mode and default to 'normal'
+      if (value === 'Other') {
+        updated.holidayMode = 'normal'
+        setProfile(updated)
+        setDone(true)
+        if (onComplete) onComplete(updated)
+        return
+      }
+    } else if (step === steps.length + 4) {
+      updated.holidayMode = value
     }
 
     setProfile(updated)
@@ -113,9 +129,12 @@ export default function Onboarding({ onComplete }) {
               </p>
             ))}
           </div>
-          <div className="bg-blue-50 rounded-xl p-3 mb-4 text-xs text-blue-700 text-left">
-            📅 Holiday calendar for <span className="font-bold">{profile.country}</span> will be used to automatically schedule your shopping reminders.
-          </div>
+          {profile.holidayMode && (
+            <div className="bg-amber-50 rounded-xl p-3 mb-4 text-xs text-amber-700 text-left flex items-center gap-2">
+              <span className="text-base">{HOLIDAY_MODE_LABELS[profile.holidayMode]?.icon}</span>
+              <span>Holiday mode: <span className="font-bold">{HOLIDAY_MODE_LABELS[profile.holidayMode]?.label}</span> — {HOLIDAY_MODE_LABELS[profile.holidayMode]?.desc}</span>
+            </div>
+          )}
         </div>
       </div>
     )
@@ -127,7 +146,8 @@ export default function Onboarding({ onComplete }) {
     : step === steps.length     ? `${step + 1} of ${totalSteps} — Your Goal`
     : step === steps.length + 1 ? `${step + 1} of ${totalSteps} — Health`
     : step === steps.length + 2 ? `${step + 1} of ${totalSteps} — Stores`
-    : `${step + 1} of ${totalSteps} — Location`
+    : step === steps.length + 3 ? `${step + 1} of ${totalSteps} — Location`
+    : `${step + 1} of ${totalSteps} — Holidays`
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center px-6 py-8">
@@ -200,6 +220,15 @@ export default function Onboarding({ onComplete }) {
         {step === steps.length + 3 && (
           <StepCountry
             key="country"
+            onNext={handleNext}
+          />
+        )}
+
+        {/* Holiday mode */}
+        {step === steps.length + 4 && (
+          <StepHolidayMode
+            key="holidayMode"
+            country={profile.country}
             onNext={handleNext}
           />
         )}
@@ -340,6 +369,47 @@ function StepCountry({ onNext }) {
         ))}
       </div>
 
+      <button onClick={() => selected && onNext(selected)}
+        disabled={!selected}
+        className="mt-4 bg-green-600 text-white px-8 py-3 rounded-full font-bold w-full hover:bg-green-700 transition disabled:opacity-40 disabled:cursor-not-allowed">
+        Continue →
+      </button>
+    </div>
+  )
+}
+
+// ── Holiday Mode Step ─────────────────────────
+function StepHolidayMode({ country, onNext }) {
+  const [selected, setSelected] = useState('')
+  const modes = [
+    { value: 'festive', icon: '🎉', label: 'Festive meals',  desc: 'Suggest traditional / celebratory foods on public holidays' },
+    { value: 'normal',  icon: '🍽️', label: 'Normal meals',   desc: 'Treat public holidays like any other day' },
+    { value: 'skip',    icon: '⊘',  label: 'Rest day',       desc: 'Mark public holidays as light / rest days' },
+  ]
+  return (
+    <div>
+      <h2 className="text-xl font-extrabold text-gray-800 mb-1">
+        🎉 Holiday handling for {country}
+      </h2>
+      <p className="text-xs text-gray-400 mb-4">
+        How should the AI treat public holidays in your meal plan?
+      </p>
+      <div className="flex flex-col gap-3">
+        {modes.map(m => (
+          <button key={m.value} onClick={() => setSelected(m.value)}
+            className={`border-2 rounded-xl px-4 py-3 text-left transition flex items-start gap-3
+              ${selected === m.value
+                ? 'border-amber-400 bg-amber-50 text-amber-800'
+                : 'border-gray-200 text-gray-700 hover:border-amber-300 hover:bg-amber-50'}`}>
+            <span className="text-2xl flex-shrink-0 mt-0.5">{m.icon}</span>
+            <div>
+              <p className="font-bold text-sm">{m.label}</p>
+              <p className="text-xs text-gray-500 mt-0.5">{m.desc}</p>
+            </div>
+            {selected === m.value && <span className="ml-auto text-amber-500 font-bold text-lg">✓</span>}
+          </button>
+        ))}
+      </div>
       <button onClick={() => selected && onNext(selected)}
         disabled={!selected}
         className="mt-4 bg-green-600 text-white px-8 py-3 rounded-full font-bold w-full hover:bg-green-700 transition disabled:opacity-40 disabled:cursor-not-allowed">

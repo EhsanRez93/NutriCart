@@ -3,6 +3,13 @@ import { supabase } from '../supabase'
 import ShoppingList from './ShoppingList'
 import ScoreCard from './ScoreCard'
 import ProgressTracker from './ProgressTracker'
+import {
+  fetchHolidaysWindow,
+  findHoliday,
+  upcomingHolidays,
+  formatHolidayDate,
+  countryHasHolidaySupport,
+} from '../utils/holidays'
 
 function calculateNutrition(profile) {
   const weight = parseFloat(profile.currentWeight)
@@ -201,10 +208,17 @@ function EditGoalsModal({ profile, onSave, onClose }) {
   const [currentWeight, setCurrentWeight] = useState(profile.currentWeight || '')
   const [targetWeight, setTargetWeight]   = useState(profile.targetWeight || '')
   const [goal, setGoal]                   = useState(profile.goal || 'Gain weight')
+  const [holidayMode, setHolidayMode]     = useState(profile.holidayMode || 'festive')
   const goals = ['Gain weight', 'Lose weight', 'Build muscle', 'Eat healthier', 'Manage a condition']
+  const holidayModes = [
+    { value: 'festive', icon: '🎉', label: 'Festive meals',  desc: 'Traditional / celebratory foods on holidays' },
+    { value: 'normal',  icon: '🍽️', label: 'Normal meals',   desc: 'Treat holidays like any other day' },
+    { value: 'skip',    icon: '⊘',  label: 'Rest day',       desc: 'Light / minimal meals on holidays' },
+  ]
+  const showHolidaySection = countryHasHolidaySupport(profile.country)
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
-      <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-md w-full">
+      <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-extrabold text-gray-800">✏️ Edit Goals</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">×</button>
@@ -231,8 +245,30 @@ function EditGoalsModal({ profile, onSave, onClose }) {
               ))}
             </div>
           </div>
+
+          {showHolidaySection && (
+            <div>
+              <label className="text-sm font-semibold text-gray-700 mb-2 block">
+                🎉 Holiday handling for {profile.country}
+              </label>
+              <div className="space-y-2">
+                {holidayModes.map(m => (
+                  <button key={m.value} onClick={() => setHolidayMode(m.value)}
+                    className={`w-full text-left px-4 py-2.5 rounded-xl text-sm font-medium transition border-2 flex items-start gap-3
+                      ${holidayMode === m.value ? 'border-amber-400 bg-amber-50 text-amber-800' : 'border-gray-200 text-gray-700 hover:border-amber-300'}`}>
+                    <span className="text-base flex-shrink-0">{m.icon}</span>
+                    <div>
+                      <p className="font-semibold">{m.label}</p>
+                      <p className="text-xs text-gray-400">{m.desc}</p>
+                    </div>
+                    {holidayMode === m.value && <span className="ml-auto text-amber-500 font-bold">✓</span>}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
-        <button onClick={() => onSave({ currentWeight, targetWeight, goal })}
+        <button onClick={() => onSave({ currentWeight, targetWeight, goal, holidayMode })}
           className="mt-6 bg-green-600 text-white px-8 py-3 rounded-full font-bold w-full hover:bg-green-700 transition">
           Save Changes
         </button>
@@ -339,12 +375,22 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [currentTime, setCurrentTime]       = useState(new Date())
   const [calendarView, setCalendarView]     = useState('week')
   const [calendarOffset, setCalendarOffset] = useState(0)
+  const [planHolidays, setPlanHolidays]     = useState([])   // holidays in current 7-day plan window
+  const [upcomingHols, setUpcomingHols]     = useState([])   // next 3 upcoming holidays
 
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
     return () => clearInterval(t)
   }, [])
+
+  // ── Load holiday data ──
+  useEffect(() => {
+    if (!profile.country || !countryHasHolidaySupport(profile.country)) return
+    const planStart = startDate || getTodayStr()
+    fetchHolidaysWindow(profile.country, planStart, 7).then(setPlanHolidays)
+    upcomingHolidays(profile.country, 3).then(setUpcomingHols)
+  }, [profile.country, startDate])
 
   // ── Load meal logs from Supabase ──
   useEffect(() => {
@@ -485,7 +531,16 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     try {
       const response = await fetch('https://nutricart-production-55b2.up.railway.app/api/mealplan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...profile, calories: nutrition.calories, protein: nutrition.protein, carbs: nutrition.carbs, fats: nutrition.fats, startDate: planStart })
+        body: JSON.stringify({
+          ...profile,
+          calories:     nutrition.calories,
+          protein:      nutrition.protein,
+          carbs:        nutrition.carbs,
+          fats:         nutrition.fats,
+          startDate:    planStart,
+          holidays:     planHolidays,
+          holidayMode:  profile.holidayMode || 'festive',
+        })
       })
       const data = await response.json()
       if (data.success) {
@@ -634,6 +689,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
 
             <IntakeTracker eaten={actualIntake} targets={nutrition} />
 
+            {/* Upcoming holidays card */}
+            {upcomingHols.length > 0 && (
+              <div className="bg-amber-50 border border-amber-200 rounded-2xl p-5 shadow-sm mb-6">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="font-bold text-amber-800">🎉 Upcoming Holidays — {profile.country}</h3>
+                  <span className="text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-full font-semibold capitalize">
+                    Mode: {profile.holidayMode || 'festive'}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  {upcomingHols.map((h, i) => (
+                    <div key={i} className="flex items-center justify-between text-sm">
+                      <span className="text-amber-700 font-semibold">🎉 {h.localName || h.name}</span>
+                      <span className="text-amber-600 text-xs">{formatHolidayDate(h.date)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-4 gap-4 mb-6">
               <CalorieRing calories={nutrition.calories} tdee={nutrition.tdee} bmr={nutrition.bmr} adjustment={nutrition.calories - nutrition.tdee} />
               <MacroRing label="Protein"       value={nutrition.protein} unit="g" color="#3b82f6" bgColor="#dbeafe" textColor="text-blue-600"   desc="Muscle building & repair" percentage={(nutrition.protein / 200) * 100} />
@@ -654,6 +729,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                   { label: 'Estimated time',   value: `${nutrition.weeksNeeded} weeks`, color: 'text-purple-700' },
                   { label: 'Weekly change',    value: '~0.5kg/week', color: 'text-gray-600' },
                   { label: 'Plan started',     value: formatDate(startDate) || 'Not started', color: 'text-gray-500' },
+                  { label: 'Holidays this plan', value: planHolidays.length > 0 ? `${planHolidays.length} day(s)` : 'None', color: planHolidays.length > 0 ? 'text-amber-600' : 'text-gray-400' },
                 ].map((item, i) => (
                   <div key={i} className="flex justify-between py-1.5 border-b border-gray-100 last:border-0">
                     <span className="text-sm text-gray-500">{item.label}</span>
@@ -725,14 +801,24 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 {aiMealPlan && (
                   <div className="flex gap-1 flex-wrap">
                     {Array.from({ length: 7 }, (_, i) => {
-                      const date    = addDays(startDate, i)
-                      const isToday = date === todayStr
+                      const date      = addDays(startDate, i)
+                      const isToday   = date === todayStr
+                      const holiday   = findHoliday(planHolidays, date)
+                      const isSkip    = holiday && (profile.holidayMode || 'festive') === 'skip'
                       return (
-                        <button key={i} onClick={() => setActiveDay(i)}
-                          className={`px-2 py-1 rounded-full text-xs font-bold transition
-                            ${activeDay === i ? 'bg-green-600 text-white' : isToday ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-green-50'}`}>
-                          {new Date(date).toLocaleDateString('en-GB', { weekday: 'short' })}{isToday && ' •'}
-                        </button>
+                        <Tooltip key={i} content={holiday ? <span>{holiday.localName || holiday.name}</span> : null}>
+                          <button onClick={() => setActiveDay(i)}
+                            className={`relative px-2 py-1 rounded-full text-xs font-bold transition
+                              ${activeDay === i ? 'bg-green-600 text-white' : isToday ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-green-50'}
+                              ${holiday ? 'ring-2 ring-amber-400' : ''}`}>
+                            {new Date(date).toLocaleDateString('en-GB', { weekday: 'short' })}{isToday && ' •'}
+                            {holiday && (
+                              <span className="absolute -top-1.5 -right-1.5 text-xs leading-none">
+                                {isSkip ? '⊘' : '🎉'}
+                              </span>
+                            )}
+                          </button>
+                        </Tooltip>
                       )
                     })}
                   </div>
@@ -749,6 +835,25 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <p className="text-green-600 text-xs">{Math.round((actualIntake.calories / nutrition.calories) * 100)}% of daily target</p>
               </div>
             )}
+
+            {/* Holiday banner */}
+            {(() => {
+              const activeDate    = startDate ? addDays(startDate, activeDay) : null
+              const todayHoliday  = activeDate ? findHoliday(planHolidays, activeDate) : null
+              if (!todayHoliday) return null
+              const mode = profile.holidayMode || 'festive'
+              return (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl px-5 py-3 mb-4 flex items-center gap-3">
+                  <span className="text-2xl">{mode === 'skip' ? '⊘' : '🎉'}</span>
+                  <div>
+                    <p className="text-amber-800 font-bold text-sm">{todayHoliday.localName || todayHoliday.name}</p>
+                    <p className="text-amber-600 text-xs">
+                      {mode === 'festive' ? 'Festive meals suggested for this holiday' : mode === 'skip' ? 'Rest day — light meals for this holiday' : 'Holiday — treated as a normal day'}
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
 
             <div className="space-y-4 mb-8">
               {currentDayMeals.map((meal, i) => {
@@ -895,15 +1000,22 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     const active   = dayMeals.filter(m => !skippedD[m.name])
                     const total    = active.reduce((s, m) => s + m.calories, 0)
                     const emoji    = getDayColor(validIdx, day.date)
+                    const holiday  = findHoliday(planHolidays, day.date)
                     return (
-                      <Tooltip key={i} content={validIdx >= 0
-                        ? <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />
-                        : <p>No plan for this day</p>}>
+                      <Tooltip key={i} content={
+                        holiday
+                          ? <div><p className="font-bold mb-1">🎉 {holiday.localName || holiday.name}</p>{validIdx >= 0 && <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />}</div>
+                          : validIdx >= 0 ? <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />
+                          : <p>No plan for this day</p>}>
                         <div onClick={() => { if (validIdx >= 0) setActiveDay(validIdx) }}
-                          className={`rounded-xl p-3 text-center cursor-pointer transition
+                          className={`relative rounded-xl p-3 text-center cursor-pointer transition
                             ${validIdx === activeDay ? 'bg-green-600 text-white shadow-lg' :
                               isToday ? 'bg-green-100 border-2 border-green-400 text-green-700' :
-                              'bg-gray-50 hover:bg-green-50 text-gray-600'}`}>
+                              'bg-gray-50 hover:bg-green-50 text-gray-600'}
+                            ${holiday ? 'ring-2 ring-amber-400' : ''}`}>
+                          {holiday && (
+                            <span className="absolute -top-1.5 -right-1.5 text-xs leading-none">🎉</span>
+                          )}
                           <p className="text-xs font-bold">{new Date(day.date).toLocaleDateString('en-GB', { weekday: 'short' })}</p>
                           <p className="text-sm font-semibold">{new Date(day.date).getDate()}</p>
                           <p className="text-base mt-1">{emoji}</p>
@@ -928,17 +1040,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       const isToday  = day.date === todayStr
                       const validIdx = day.planDayIndex
                       const emoji    = getDayColor(validIdx, day.date)
+                      const holiday  = findHoliday(planHolidays, day.date)
                       const dayMeals = validIdx >= 0 ? (aiMealPlan?.days[validIdx]?.meals || []) : []
                       const skippedD = skippedMeals[`day-${validIdx}`] || {}
                       const total    = dayMeals.filter(m => !skippedD[m.name]).reduce((s, m) => s + m.calories, 0)
                       return (
-                        <Tooltip key={i} content={validIdx >= 0
-                          ? <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />
-                          : <p>{formatDate(day.date)}</p>}>
+                        <Tooltip key={i} content={
+                          holiday
+                            ? <div><p className="font-bold mb-1">🎉 {holiday.localName || holiday.name}</p>{validIdx >= 0 && <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />}</div>
+                            : validIdx >= 0 ? <DayPopup dayIndex={validIdx} aiMealPlan={aiMealPlan} eatenMeals={eatenMeals} skippedMeals={skippedMeals} startDate={startDate} />
+                            : <p>{formatDate(day.date)}</p>}>
                           <div onClick={() => { if (validIdx >= 0) { setActiveDay(validIdx); setCalendarView('day') } }}
-                            className={`rounded-lg p-1.5 text-center cursor-pointer transition min-h-12
-                              ${isToday ? 'bg-green-100 border-2 border-green-400' : validIdx >= 0 ? 'bg-gray-50 hover:bg-green-50' : 'bg-white opacity-40'}`}>
-                            <p className={`text-xs font-bold ${isToday ? 'text-green-700' : 'text-gray-600'}`}>{new Date(day.date).getDate()}</p>
+                            className={`relative rounded-lg p-1.5 text-center cursor-pointer transition min-h-12
+                              ${isToday ? 'bg-green-100 border-2 border-green-400' : validIdx >= 0 ? 'bg-gray-50 hover:bg-green-50' : 'bg-white opacity-40'}
+                              ${holiday ? 'ring-2 ring-amber-400' : ''}`}>
+                            {holiday && (
+                              <span className="absolute -top-1 -right-1 text-xs leading-none">🎉</span>
+                            )}
+                            <p className={`text-xs font-bold ${holiday ? 'text-amber-600' : isToday ? 'text-green-700' : 'text-gray-600'}`}>
+                              {new Date(day.date).getDate()}
+                            </p>
                             {validIdx >= 0 && <p className="text-sm">{emoji}</p>}
                             {total > 0 && <p className="text-xs text-gray-500">{Math.round(total / 100) * 100}</p>}
                           </div>
@@ -947,7 +1068,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     })}
                   </div>
                   <div className="flex gap-4 mt-4 justify-center text-xs text-gray-500 flex-wrap">
-                    {[['🟢','4 meals eaten'],['🟡','2-3 meals'],['🔴','Some skipped'],['🔵','Planned'],['⬜','No data']].map(([e,l]) => (
+                    {[['🟢','4 meals eaten'],['🟡','2-3 meals'],['🔴','Some skipped'],['🔵','Planned'],['⬜','No data'],['🎉','Public holiday']].map(([e,l]) => (
                       <span key={l} className="flex items-center gap-1">{e} {l}</span>
                     ))}
                   </div>
