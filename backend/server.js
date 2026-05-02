@@ -26,21 +26,6 @@ app.use(express.json())
 app.get('/health', (req, res) => {
   res.json({ status: 'NutriCart backend is running ✅' })
 })
-app.get('/debug-key', (req, res) => {
-  const raw       = process.env.GROQ_API_KEY || ''
-  const sanitized = raw.trim().replace(/^['"]+|['"]+$/g, '')
-  res.json({
-    rawLength:        raw.length,
-    rawStarts:        raw.slice(0, 4),
-    rawEnds:          raw.slice(-4),
-    rawHasWhitespace: /\s/.test(raw),
-    rawHasQuote:      /['"]/.test(raw),
-    sanitizedLength:  sanitized.length,
-    sanitizedStarts:  sanitized.slice(0, 4),
-    sanitizedEnds:    sanitized.slice(-4),
-    nodeVersion:      process.version,
-  })
-})
 
 // ── Holidays Route ───────────────────────────────────
 app.get('/api/holidays', async (req, res) => {
