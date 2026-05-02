@@ -420,10 +420,15 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   useEffect(() => {
     if (!userId) return
     async function loadLogs() {
+      if (!startDate) return
+      const planStart = startDate
+      const planEnd   = addDays(startDate, 6)
       const { data, error } = await supabase
         .from('meal_logs')
-        .select('*')
+        select('*')
         .eq('user_id', userId)
+        .gte('log_date', planStart)
+        .lte('log_date', planEnd)
 
       if (data && !error) {
         const eaten   = {}
