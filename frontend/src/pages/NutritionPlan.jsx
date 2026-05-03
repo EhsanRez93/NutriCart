@@ -499,11 +499,13 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [pantryItems, setPantryItems] = useState([])
   const [pantryLoading, setPantryLoading] = useState(false)
   const [pantryDraft, setPantryDraft] = useState({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' })
-  const receiptInputRef = useRef(null)
+  const receiptUploadInputRef = useRef(null)
+  const receiptCameraInputRef = useRef(null)
   const [receiptOcrLoading, setReceiptOcrLoading] = useState(false)
   const [receiptOcrError, setReceiptOcrError] = useState(null)
   const [receiptOcrItems, setReceiptOcrItems] = useState([])
   const [receiptOcrStore, setReceiptOcrStore] = useState('')
+  const [showReceiptSourcePicker, setShowReceiptSourcePicker] = useState(false)
   const [initialPantryQtyById, setInitialPantryQtyById] = useState({})
   const [stockWarnings, setStockWarnings] = useState([])
   const [mealConsumptionMap, setMealConsumptionMap] = useState({}) // key: day-{i}:{mealName}
@@ -1287,7 +1289,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setReceiptOcrError(err.message || 'Receipt OCR failed. Please try again.')
     } finally {
       setReceiptOcrLoading(false)
-      if (receiptInputRef.current) receiptInputRef.current.value = ''
+      if (receiptUploadInputRef.current) receiptUploadInputRef.current.value = ''
+      if (receiptCameraInputRef.current) receiptCameraInputRef.current.value = ''
     }
   }
 
@@ -2766,7 +2769,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <h3 className="font-bold text-gray-800">➕ Add to pantry</h3>
                 <div className="flex items-center gap-2">
                   <button
-                    onClick={() => receiptInputRef.current?.click()}
+                    onClick={() => setShowReceiptSourcePicker(true)}
                     disabled={receiptOcrLoading}
                     className="flex items-center gap-1.5 text-xs font-bold bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-full hover:bg-emerald-200 transition disabled:opacity-60">
                     {receiptOcrLoading ? '⏳ Reading receipt...' : '🧾 Scan Receipt'}
@@ -2778,8 +2781,37 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                   </button>
                 </div>
               </div>
+              {showReceiptSourcePicker && (
+                <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-xs font-bold text-emerald-800 mb-2">Add receipt photo from:</p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      onClick={() => { setShowReceiptSourcePicker(false); receiptUploadInputRef.current?.click() }}
+                      className="text-xs font-bold bg-white border border-emerald-300 text-emerald-700 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition">
+                      📁 Upload Photo
+                    </button>
+                    <button
+                      onClick={() => { setShowReceiptSourcePicker(false); receiptCameraInputRef.current?.click() }}
+                      className="text-xs font-bold bg-white border border-emerald-300 text-emerald-700 px-3 py-1.5 rounded-full hover:bg-emerald-100 transition">
+                      📷 Take Photo
+                    </button>
+                    <button
+                      onClick={() => setShowReceiptSourcePicker(false)}
+                      className="text-xs font-bold bg-gray-100 text-gray-600 px-3 py-1.5 rounded-full hover:bg-gray-200 transition">
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
               <input
-                ref={receiptInputRef}
+                ref={receiptUploadInputRef}
+                type="file"
+                accept="image/*"
+                onChange={e => parseReceiptImage(e.target.files?.[0])}
+                className="hidden"
+              />
+              <input
+                ref={receiptCameraInputRef}
                 type="file"
                 accept="image/*"
                 capture="environment"
