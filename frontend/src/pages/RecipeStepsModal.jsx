@@ -2,22 +2,41 @@ import { useState, useEffect, useRef } from 'react'
 
 const API = 'https://nutricart-production-cd53.up.railway.app'
 
-// Keywords that mean "wait while this cooks / rests" — timer worthy
-const WAIT_KEYWORDS = /simmer|boil|bake|roast|steam|fry|sauté|sear|grill|marinate|rest|reduce|broil|poach|blanch|caramelise|caramelize|slow.?cook/i
-
-// Parse the first time mention from a string: "10 minutes", "8 min", "1 hour 30 min", etc.
-function parseWaitSeconds(text) {
+// Parse "8 min", "1h 30m", "3 minutes" → seconds
+function parseDuration(str) {
+  if (!str) return null
   let total = 0
-  const hours   = text.match(/(\d+)\s*h(our|r)?s?/i)
-  const minutes = text.match(/(\d+)\s*m(in|inute)?s?/i)
-  if (hours)   total += parseInt(hours[1]) * 3600
-  if (minutes) total += parseInt(minutes[1]) * 60
+  const h = str.match(/(\d+)\s*h/i)
+  const m = str.match(/(\d+)\s*m(?!s)/i) // m but not ms
+  const s = str.match(/(\d+)\s*s(?!ec|aute|auté)/i)
+  if (h) total += parseInt(h[1]) * 3600
+  if (m) total += parseInt(m[1]) * 60
+  if (s) total += parseInt(s[1])
   return total > 0 ? total : null
 }
 
-function isWaitStep(step) {
-  const combined = `${step.title || ''} ${step.instruction || ''}`
-  return WAIT_KEYWORDS.test(combined) && parseWaitSeconds(combined) !== null
+function requestNotifPermission() {
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
+    Notification.requestPermission()
+  }
+}
+
+function fireTimerAlert(title) {
+  if (navigator.vibrate) navigator.vibrate([400, 100, 400, 100, 400])
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)()
+    ;[0, 0.35, 0.7].forEach(t => {
+      const osc = ctx.createOscillator(); const gain = ctx.createGain()
+      osc.connect(gain); gain.connect(ctx.destination)
+      osc.frequency.value = 880
+      gain.gain.setValueAtTime(0.45, ctx.currentTime + t)
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.3)
+      osc.start(ctx.currentTime + t); osc.stop(ctx.currentTime + t + 0.3)
+    })
+  } catch (_) {}
+  if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    new Notification('⏰ Timer done!', { body: `"${title}" is ready!`, icon: '/favicon.ico' })
+  }
 }
 
 const DIFFICULTY_COLORS = {
@@ -26,79 +45,135 @@ const DIFFICULTY_COLORS = {
   Hard:   { bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-300' },
 }
 
-// ── Step Timer component ──────────────────────────────────────────────────
-function StepTimer({ seconds: initialSeconds, onDone }) {
-  const [remaining, setRemaining] = useState(null) // null = not started
-  const [running, setRunning]     = useState(false)
-  const intervalRef               = useRef(null)
+// ── Step Timer ────────────────────────────────────────────────────────────
+// Uses absolute endTime in localStorage so it survives tab switches & throttling.
+// On page return, checks if timer already expired and fires alert immediately.
+function StepTimer({ storageKey, defaultSeconds, stepTitle }) {
+  const [endTime,   setEndTime]   = useState(null)
+  const [remaining, setRemaining] = useState(null)
+  const [running,   setRunning]   = useState(false)
+  const [done,      setDone]      = useState(false)
+  const [open,      setOpen]      = useState(false) // whether the inline timer is visible
+  const intervalRef = useRef(null)
 
+  // Restore any running timer from localStorage on mount
   useEffect(() => {
-    if (!running) return
+    const saved = localStorage.getItem(storageKey)
+    if (!saved) return
+    const end = parseInt(saved)
+    const rem = Math.ceil((end - Date.now()) / 1000)
+    if (rem > 0) {
+      setEndTime(end); setRemaining(rem); setRunning(true); setOpen(true)
+    } else {
+      // Timer expired while we were away — fire alert now
+      localStorage.removeItem(storageKey)
+      setDone(true); setOpen(true)
+      fireTimerAlert(stepTitle)
+    }
+  }, [])
+
+  // Also check on page visibility change (tab refocus / screen unlock)
+  useEffect(() => {
+    function onVisible() {
+      if (document.visibilityState !== 'visible') return
+      const saved = localStorage.getItem(storageKey)
+      if (!saved) return
+      const end = parseInt(saved)
+      const rem = Math.ceil((end - Date.now()) / 1000)
+      if (rem <= 0) {
+        clearInterval(intervalRef.current)
+        localStorage.removeItem(storageKey)
+        setRunning(false); setDone(true); setRemaining(0)
+        fireTimerAlert(stepTitle)
+      }
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [storageKey, stepTitle])
+
+  // Tick using endTime difference — immune to throttling
+  useEffect(() => {
+    if (!running || !endTime) return
     intervalRef.current = setInterval(() => {
-      setRemaining(prev => {
-        if (prev <= 1) {
-          clearInterval(intervalRef.current)
-          setRunning(false)
-          // Vibrate if supported
-          if (navigator.vibrate) navigator.vibrate([300, 100, 300])
-          // Play a simple beep via Web Audio
-          try {
-            const ctx = new (window.AudioContext || window.webkitAudioContext)()
-            ;[0, 0.3, 0.6].forEach(t => {
-              const osc  = ctx.createOscillator()
-              const gain = ctx.createGain()
-              osc.connect(gain); gain.connect(ctx.destination)
-              osc.frequency.value = 880
-              gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
-              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.25)
-              osc.start(ctx.currentTime + t)
-              osc.stop(ctx.currentTime + t + 0.25)
-            })
-          } catch (_) {}
-          onDone?.()
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
+      const rem = Math.ceil((endTime - Date.now()) / 1000)
+      if (rem <= 0) {
+        clearInterval(intervalRef.current)
+        setRunning(false); setDone(true); setRemaining(0)
+        localStorage.removeItem(storageKey)
+        fireTimerAlert(stepTitle)
+      } else {
+        setRemaining(rem)
+      }
+    }, 500)
     return () => clearInterval(intervalRef.current)
-  }, [running])
+  }, [running, endTime])
+
+  function startTimer() {
+    requestNotifPermission()
+    const secs = defaultSeconds || 300
+    const end  = Date.now() + secs * 1000
+    localStorage.setItem(storageKey, end.toString())
+    setEndTime(end); setRemaining(secs); setRunning(true); setDone(false); setOpen(true)
+  }
+
+  function pause() {
+    clearInterval(intervalRef.current)
+    setRunning(false)
+    localStorage.removeItem(storageKey)
+  }
+
+  function resume() {
+    const end = Date.now() + remaining * 1000
+    localStorage.setItem(storageKey, end.toString())
+    setEndTime(end); setRunning(true)
+  }
+
+  function reset() {
+    clearInterval(intervalRef.current)
+    localStorage.removeItem(storageKey)
+    setRunning(false); setDone(false); setRemaining(null); setEndTime(null); setOpen(false)
+  }
 
   function fmt(s) {
-    const m = Math.floor(s / 60).toString().padStart(2, '0')
+    const m   = Math.floor(s / 60).toString().padStart(2, '0')
     const sec = (s % 60).toString().padStart(2, '0')
     return `${m}:${sec}`
   }
 
-  function start() { setRemaining(initialSeconds); setRunning(true) }
-  function pause() { setRunning(false) }
-  function resume() { setRunning(true) }
-  function reset() { clearInterval(intervalRef.current); setRunning(false); setRemaining(null) }
-
-  if (remaining === null) {
-    return (
-      <button onClick={start}
-        className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 border border-orange-300 hover:bg-orange-200 transition mt-1.5">
-        ⏱ Start timer ({fmt(initialSeconds)})
-      </button>
-    )
-  }
-
-  const done = remaining === 0
   return (
-    <div className={`inline-flex items-center gap-2 mt-1.5 px-3 py-1.5 rounded-full border text-xs font-bold
-      ${done ? 'bg-green-100 border-green-400 text-green-700' : 'bg-orange-50 border-orange-300 text-orange-700'}`}>
-      {done ? (
-        <>✅ Done! <button onClick={reset} className="underline text-orange-600 ml-1">Reset</button></>
-      ) : (
-        <>
-          <span className="tabular-nums text-sm">{fmt(remaining)}</span>
-          {running
-            ? <button onClick={pause}  className="hover:text-orange-900">⏸</button>
-            : <button onClick={resume} className="hover:text-orange-900">▶</button>
-          }
-          <button onClick={reset} className="hover:text-red-600">↺</button>
-        </>
+    <div onClick={e => e.stopPropagation()}>
+      {/* Icon button at bottom-right — only shown when timer is not open */}
+      {!open && (
+        <button
+          onClick={startTimer}
+          title={`Start timer${defaultSeconds ? ` (${fmt(defaultSeconds)})` : ''}`}
+          className="absolute bottom-3 right-3 w-8 h-8 rounded-full bg-gray-100 hover:bg-orange-100 flex items-center justify-center text-gray-400 hover:text-orange-600 transition shadow-sm text-base">
+          ⏱
+        </button>
+      )}
+
+      {/* Inline timer — shown when open */}
+      {open && (
+        <div className={`mt-2 flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold
+          ${done
+            ? 'bg-green-50 border-green-400 text-green-700'
+            : 'bg-orange-50 border-orange-300 text-orange-700'}`}>
+          {done ? (
+            <>
+              <span>✅ Done!</span>
+              <button onClick={reset} className="ml-auto text-xs text-gray-400 hover:text-gray-600 underline">Dismiss</button>
+            </>
+          ) : (
+            <>
+              <span className="font-mono text-sm tabular-nums">{fmt(remaining ?? defaultSeconds ?? 0)}</span>
+              {running
+                ? <button onClick={pause}  title="Pause"  className="hover:text-orange-900 text-base">⏸</button>
+                : <button onClick={resume} title="Resume" className="hover:text-green-700 text-base">▶</button>
+              }
+              <button onClick={reset} title="Cancel" className="ml-auto hover:text-red-600">✕</button>
+            </>
+          )}
+        </div>
       )}
     </div>
   )
@@ -243,11 +318,12 @@ export default function RecipeStepsModal({ meal, userId, onClose }) {
                 {steps.map((s, i) => {
                   const done    = !!checked[i]
                   const current = i === activeStep && !done
+                  const stepSecs = parseDuration(s.duration)
                   return (
                     <div
                       key={i}
                       onClick={() => toggleStep(i)}
-                      className={`rounded-2xl p-4 border-2 cursor-pointer transition-all select-none
+                      className={`relative rounded-2xl p-4 border-2 cursor-pointer transition-all select-none
                         ${done    ? 'border-green-300 bg-green-50 opacity-70' :
                           current ? 'border-green-500 bg-white shadow-md' :
                                     'border-gray-200 bg-white hover:border-gray-300'}`}>
@@ -257,21 +333,20 @@ export default function RecipeStepsModal({ meal, userId, onClose }) {
                           ${done ? 'bg-green-500 text-white' : current ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
                           {done ? '✓' : s.step}
                         </div>
-                      <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0 pr-8">
                           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                             <span className="text-base">{s.icon || '🍳'}</span>
                             <span className={`font-bold text-sm ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>{s.title}</span>
                             <span className="ml-auto text-xs text-gray-400 flex-shrink-0">⏱ {s.duration}</span>
                           </div>
                           <p className={`text-sm leading-relaxed ${done ? 'text-gray-400 line-through' : 'text-gray-600'}`}>{s.instruction}</p>
-                          {!done && isWaitStep(s) && (() => {
-                            const secs = parseWaitSeconds(`${s.title} ${s.instruction}`)
-                            return secs ? (
-                              <div onClick={e => e.stopPropagation()}>
-                                <StepTimer key={i} seconds={secs} onDone={() => toggleStep(i)} />
-                              </div>
-                            ) : null
-                          })()}
+                          {!done && (
+                            <StepTimer
+                              storageKey={`nc_timer_${meal.name}_step_${i}`}
+                              defaultSeconds={stepSecs}
+                              stepTitle={s.title}
+                            />
+                          )}
                         </div>
                       </div>
                     </div>
