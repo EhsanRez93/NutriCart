@@ -1026,7 +1026,7 @@ app.post('/api/scale-meal', async (req, res) => {
     }
 
     // Parse ingredient strings and scale them
-    const ingredients = Array.isArray(meal.ingredients) ? meal.ingredients : []
+    const ingredients = Array.isArray(meal.items) ? meal.items : (Array.isArray(meal.ingredients) ? meal.ingredients : [])
     const scaledIngredients = ingredients.map(ing => {
       // Parse "2 cups sugar", "500g spinach", etc
       const match = ing.match(/^([\d.]+)\s*([a-zA-Z]+)?\s+(.+)$/)
