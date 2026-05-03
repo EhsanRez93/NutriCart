@@ -981,13 +981,15 @@ Respond ONLY with valid JSON, no markdown:
   "pantryUtilization": "Percentage of meals using pantry items"
 }`
     
-    const response = await client.messages.create({
+    const completion = await client.chat.completions.create({
       model: 'llama-3.3-70b-versatile',
-      max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
+      max_tokens: 2000,
+      temperature: 0.5,
+      response_format: { type: 'json_object' },
     })
 
-    const responseText = response.content[0]?.text || ''
+    const responseText = completion.choices?.[0]?.message?.content || ''
     const jsonMatch = responseText.match(/\{[\s\S]*\}/)
     if (!jsonMatch) throw new Error('No JSON in Groq response')
     const parsed = JSON.parse(jsonMatch[0])
@@ -998,11 +1000,18 @@ Respond ONLY with valid JSON, no markdown:
       days: currentPlan.days.map(origDay => {
         const newDay = parsed.futureDays.find(d => d.date === origDay.date)
         if (!newDay) return origDay
+        const normalizedMeals = (newDay.meals || []).map(m => {
+          const items = Array.isArray(m.items)
+            ? m.items
+            : (Array.isArray(m.ingredients) ? m.ingredients : [])
+          return { ...m, items }
+        })
         return {
           ...origDay,
           ...newDay,
-          totalCalories: newDay.meals.reduce((s, m) => s + (+m.calories || 0), 0),
-          totalProtein: newDay.meals.reduce((s, m) => s + (+m.protein || 0), 0),
+          meals: normalizedMeals,
+          totalCalories: normalizedMeals.reduce((s, m) => s + (+m.calories || 0), 0),
+          totalProtein: normalizedMeals.reduce((s, m) => s + (+m.protein || 0), 0),
         }
       }),
     }
