@@ -7,6 +7,7 @@ import ProgressTracker from './ProgressTracker'
 import RecipeStepsModal from './RecipeStepsModal'
 import BarcodeScanner from './BarcodeScanner'
 import PriceHistoryModal from './PriceHistoryModal'
+import StepTimer, { parseDuration } from '../utils/StepTimer'
 import {
   fetchHolidaysWindow,
   findHoliday,
@@ -2317,13 +2318,17 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       <div className="space-y-2">
                         <p className="text-xs font-bold text-gray-500 mb-1">📋 Steps</p>
                         {cookNowRecipe.steps.map((s, i) => (
-                          <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-xl px-3 py-2">
+                          <div key={i} className="relative flex items-start gap-2 bg-gray-50 rounded-xl px-3 py-2 pb-3">
                             <span className="w-6 h-6 rounded-full bg-orange-100 text-orange-700 text-xs font-bold flex items-center justify-center flex-shrink-0">{s.step}</span>
-                            <div className="flex-1 min-w-0">
+                            <div className="flex-1 min-w-0 pr-8">
                               <p className="font-bold text-xs text-gray-700">{s.icon} {s.title}</p>
                               <p className="text-xs text-gray-500 mt-0.5">{s.instruction}</p>
+                              <StepTimer
+                                storageKey={`nc_cooknow_${cookNowRecipe.name}_step_${i}`}
+                                defaultSeconds={parseDuration(s.duration)}
+                                stepTitle={s.title}
+                              />
                             </div>
-                            <span className="text-xs text-gray-400 flex-shrink-0">{s.duration}</span>
                           </div>
                         ))}
                       </div>
