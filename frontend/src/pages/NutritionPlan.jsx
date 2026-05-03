@@ -1100,6 +1100,59 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     await supabase.from('pantry_items').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId)
   }
 
+  async function adjustPantryQuantity(item, mode) {
+    const unit = item.unit || 'pcs'
+    const action = mode === 'add' ? 'add' : 'reduce'
+    const input = window.prompt(`${action === 'add' ? 'Add' : 'Reduce'} how many ${unit} for ${item.name}?`)
+    if (input === null) return
+    const amount = Number.parseFloat(String(input).replace(',', '.'))
+    if (!Number.isFinite(amount) || amount <= 0) {
+      window.alert('Please enter a valid positive number.')
+      return
+    }
+
+    const current = Number(item.quantity)
+    const safeCurrent = Number.isFinite(current) ? current : 0
+    const nextQty = mode === 'add'
+      ? +(safeCurrent + amount).toFixed(3)
+      : +Math.max(0, safeCurrent - amount).toFixed(3)
+
+    await updatePantryItem(item.id, { quantity: nextQty })
+
+    if (mode === 'add') {
+      setInitialPantryQtyById(prev => {
+        const previousInitial = Number(prev[item.id])
+        const baseline = Number.isFinite(previousInitial) ? previousInitial : 0
+        return { ...prev, [item.id]: Math.max(baseline, nextQty) }
+      })
+    } else {
+      const initial = Number(initialPantryQtyById[item.id])
+      if (Number.isFinite(initial) && initial > 0) {
+        const threshold = initial * 0.2
+        if (safeCurrent > threshold && nextQty <= threshold && nextQty > 0) {
+          pushStockWarning({
+            key: `low:${item.id}`,
+            type: 'low',
+            itemName: item.name,
+            qtyLeft: nextQty,
+            unit: item.unit || '',
+            time: Date.now(),
+          })
+        }
+        if (nextQty <= 0) {
+          pushStockWarning({
+            key: `out:${item.id}`,
+            type: 'out',
+            itemName: item.name,
+            qtyLeft: 0,
+            unit: item.unit || '',
+            time: Date.now(),
+          })
+        }
+      }
+    }
+  }
+
   // Helper: find pantry items expiring within N days
   function expiringPantry(daysAhead = 3) {
     const today = getTodayStr()
@@ -1224,7 +1277,14 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
 
   // ── v18.0: Cook Now — instant recipe from pantry ──
   async function cookNow() {
-    if (pantryItems.length === 0) return
+    const availablePantry = pantryItems.filter(p => {
+      const qty = Number(p.quantity)
+      return Number.isFinite(qty) && qty > 0
+    })
+    if (availablePantry.length === 0) {
+      setCookNowError('No in-stock pantry items available. Add or restock items first.')
+      return
+    }
     setCookNowLoading(true)
     setCookNowError(null)
     setCookNowRecipe(null)
@@ -1236,7 +1296,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
           'Content-Type': 'application/json',
           'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
         },
-        body: JSON.stringify({ pantryItems, profile, userId }),
+        body: JSON.stringify({ pantryItems: availablePantry, profile, userId }),
       })
       const data = await response.json()
       if (data.success) {
@@ -2590,8 +2650,19 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                                   )}
                                 </p>
                               </div>
-                              <button onClick={() => deletePantryItem(p.id)}
-                                className="text-red-400 hover:text-red-600 text-lg ml-2 flex-shrink-0" title="Remove">×</button>
+                              <div className="flex items-center gap-1.5 ml-2 flex-shrink-0">
+                                <button
+                                  onClick={() => adjustPantryQuantity(p, 'reduce')}
+                                  className="w-7 h-7 rounded-full border border-amber-300 bg-amber-50 text-amber-700 font-extrabold text-sm hover:bg-amber-100"
+                                  title="Reduce quantity">−</button>
+                                <button
+                                  onClick={() => adjustPantryQuantity(p, 'add')}
+                                  className="w-7 h-7 rounded-full border border-green-300 bg-green-50 text-green-700 font-extrabold text-sm hover:bg-green-100"
+                                  title="Add quantity">+</button>
+                                <button onClick={() => deletePantryItem(p.id)}
+                                  className="w-7 h-7 rounded-full border border-red-200 bg-red-50 text-red-500 hover:text-red-700 text-sm font-bold"
+                                  title="Remove">×</button>
+                              </div>
                             </div>
                           )
                         })}

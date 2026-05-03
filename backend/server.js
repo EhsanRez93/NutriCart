@@ -1285,16 +1285,99 @@ app.post('/api/cook-now', async (req, res) => {
   const { pantryItems = [], profile = {}, userId } = req.body
   const distinctId = userId || req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
-    if (pantryItems.length === 0) {
-      return res.status(400).json({ success: false, error: 'No pantry items provided.' })
+    const availablePantry = pantryItems.filter(p => Number.isFinite(Number(p.quantity)) && Number(p.quantity) > 0)
+    if (availablePantry.length === 0) {
+      return res.status(400).json({ success: false, error: 'No in-stock pantry items available.' })
     }
     const client = getGroqClient()
 
-    const pantryList = pantryItems
+    const pantryList = availablePantry
       .map(p => `${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}`)
       .join(', ')
 
-    const systemPrompt = `You are a creative chef AI. The user has opened their fridge/pantry and wants to cook something RIGHT NOW with only what they have. Generate ONE realistic, satisfying recipe using only (or mostly) the listed ingredients. No grocery shopping allowed.
+    const toUnit = (u = '') => {
+      const unit = String(u).toLowerCase().trim()
+      if (unit === 'pc' || unit === 'x') return 'pcs'
+      return unit || 'pcs'
+    }
+    const parseQty = (raw = '') => {
+      const text = String(raw).toLowerCase()
+      const match = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/)
+      if (match) return { qty: parseFloat(match[1]), unit: toUnit(match[2]) }
+      const numOnly = text.match(/(\d+(?:\.\d+)?)/)
+      if (numOnly) return { qty: parseFloat(numOnly[1]), unit: 'pcs' }
+      return { qty: 1, unit: 'pcs' }
+    }
+    const convertToUnit = (qty, fromUnit, toU) => {
+      const from = toUnit(fromUnit)
+      const to = toUnit(toU)
+      if (!Number.isFinite(qty)) return null
+      if (!from || !to || from === to) return qty
+
+      if (from === 'kg' && to === 'g') return qty * 1000
+      if (from === 'g' && to === 'kg') return qty / 1000
+
+      const volumeToMl = { ml: 1, l: 1000, tsp: 5, tbsp: 15, cup: 240 }
+      if (volumeToMl[from] && volumeToMl[to]) {
+        return (qty * volumeToMl[from]) / volumeToMl[to]
+      }
+
+      if ((from === 'pack' && to === 'pcs') || (from === 'pcs' && to === 'pack')) return qty
+      return null
+    }
+
+    const normalizeUsedIngredients = (used) => {
+      if (!Array.isArray(used)) return []
+      return used.map(ing => {
+        if (typeof ing === 'string') return { name: ing, qty: '1 pcs' }
+        return {
+          name: String(ing?.name || '').trim(),
+          qty: String(ing?.qty || '1 pcs').trim(),
+        }
+      }).filter(i => i.name)
+    }
+
+    const validateRecipeAgainstPantry = (recipe) => {
+      const violations = []
+      const normalizedUsed = normalizeUsedIngredients(recipe?.usedIngredients)
+      if (normalizedUsed.length === 0) {
+        return { ok: false, violations: ['No usedIngredients were provided by AI.'], normalizedUsed }
+      }
+
+      for (const ing of normalizedUsed) {
+        const ingName = String(ing.name || '').toLowerCase()
+        const matched = availablePantry
+          .filter(p => {
+            const n = String(p.name || '').toLowerCase()
+            return n.includes(ingName) || ingName.includes(n)
+          })
+          .sort((a, b) => String(b.name || '').length - String(a.name || '').length)[0]
+
+        if (!matched) {
+          violations.push(`Ingredient not in pantry: ${ing.name}`)
+          continue
+        }
+
+        const parsed = parseQty(ing.qty)
+        const availableQty = Number(matched.quantity)
+        const converted = convertToUnit(parsed.qty, parsed.unit, matched.unit || parsed.unit)
+        const needed = Number.isFinite(converted) ? converted : parsed.qty
+        if (!Number.isFinite(availableQty) || needed > availableQty + 1e-6) {
+          violations.push(`Not enough ${matched.name}: need ${ing.qty}, have ${matched.quantity}${matched.unit || ''}`)
+        }
+      }
+
+      return { ok: violations.length === 0, violations, normalizedUsed }
+    }
+
+    const systemPrompt = `You are a creative chef AI. The user has opened their pantry and wants to cook something RIGHT NOW using only their remaining in-stock ingredients.
+
+STRICT RULES:
+1) Use ONLY ingredients that exist in the provided pantry list.
+2) Do NOT exceed available pantry quantities.
+3) usedIngredients must include exact amounts with units (e.g. "150g", "1 tbsp", "2 pcs").
+4) missingIngredients must be an empty array [].
+5) No grocery shopping suggestions.
 
 Return ONLY valid JSON matching this schema:
 {
@@ -1311,38 +1394,52 @@ Return ONLY valid JSON matching this schema:
     { "name": "chicken breast", "qty": "150g" },
     { "name": "olive oil", "qty": "1 tbsp" }
   ],
-  "missingIngredients": ["salt", "pepper"],
+  "missingIngredients": [],
   "steps": [
     { "step": 1, "icon": "🔪", "title": "Chop the onion", "instruction": "Dice one small onion finely.", "duration": "2 min" },
     { "step": 2, "icon": "🔥", "title": "Heat the pan", "instruction": "Warm olive oil over medium heat for 1 minute.", "duration": "1 min" }
   ],
   "tip": "Optional short cooking tip"
-}
-
-IMPORTANT: usedIngredients MUST only contain ingredients that are in the pantry list provided. Each entry must have "name" (matching the pantry item name) and "qty" (the amount used, e.g. "150g", "2 tbsp", "1 pcs").`
-
-    const userPrompt = `My pantry/fridge contains: ${pantryList}
+}`
+    const baseUserPrompt = `My current in-stock pantry contains: ${pantryList}
 ${profile.goal ? `My goal: ${profile.goal}` : ''}
 ${profile.calories ? `My daily calorie target: ${profile.calories} kcal` : ''}
 
 Please give me ONE recipe I can cook right now.`
 
-    const completion = await client.chat.completions.create({
-      model:       'llama-3.3-70b-versatile',
-      temperature: 0.8,
-      max_tokens:  1200,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user',   content: userPrompt },
-      ],
-    })
+    let recipe = null
+    let feedback = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const completion = await client.chat.completions.create({
+        model:       'llama-3.3-70b-versatile',
+        temperature: 0.7,
+        max_tokens:  1200,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user',   content: `${baseUserPrompt}${feedback}` },
+        ],
+      })
 
-    const raw  = completion.choices[0]?.message?.content || ''
-    const json = raw.match(/\{[\s\S]*\}/)
-    if (!json) throw new Error('No JSON in response')
-    const recipe = JSON.parse(json[0])
+      const raw  = completion.choices[0]?.message?.content || ''
+      const json = raw.match(/\{[\s\S]*\}/)
+      if (!json) {
+        feedback = '\n\nYour previous answer was invalid JSON. Return valid JSON only.'
+        continue
+      }
+      const parsedRecipe = JSON.parse(json[0])
+      const check = validateRecipeAgainstPantry(parsedRecipe)
+      if (check.ok) {
+        recipe = { ...parsedRecipe, usedIngredients: check.normalizedUsed, missingIngredients: [] }
+        break
+      }
+      feedback = `\n\nYour previous recipe violated pantry constraints:\n- ${check.violations.join('\n- ')}\nFix it and regenerate.`
+    }
 
-    posthog.capture({ distinctId, event: 'cook_now_used', properties: { pantry_items: pantryItems.length } })
+    if (!recipe) {
+      throw new Error('Could not generate a recipe that fits remaining pantry quantities. Please try again.')
+    }
+
+    posthog.capture({ distinctId, event: 'cook_now_used', properties: { pantry_items: availablePantry.length } })
     res.json({ success: true, recipe })
   } catch (error) {
     console.error('cook-now error:', error.message)
