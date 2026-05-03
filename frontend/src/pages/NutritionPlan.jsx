@@ -456,6 +456,12 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [pantryReplanLoading, setPantryReplanLoading] = useState(false)
   const [pantryReplanError, setPantryReplanError] = useState(null)
 
+  // ── v17.0 Priority 2: Meal prep multiplier ──
+  const [scaledMealId, setScaledMealId] = useState(null) // "mealName@HH:MM" format to identify meal
+  const [mealScaleMultiplier, setMealScaleMultiplier] = useState(1)
+  const [scaledMealIngredients, setScaledMealIngredients] = useState([])
+  const [scaleLoading, setScaleLoading] = useState(false)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -850,6 +856,38 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setPantryReplanError('Backend not reachable. Please try again.')
     } finally {
       setPantryReplanLoading(false)
+    }
+  }
+
+  // ── v17.0: Scale meal ingredients for meal prep (2x, 3x, etc) ──
+  async function scaleMeal(meal, multiplier) {
+    if (multiplier < 1) return
+    setScaleLoading(true)
+    try {
+      const mealId = `${meal.name}@${meal.time}`
+      setScaledMealId(mealId)
+      setMealScaleMultiplier(multiplier)
+      
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/scale-meal', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+        body: JSON.stringify({
+          meal,
+          multiplier,
+        }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setScaledMealIngredients(data.scaledIngredients)
+        posthog.capture('meal_scaled', { meal_name: meal.name, multiplier })
+      }
+    } catch (err) {
+      console.error('Scale meal error:', err)
+    } finally {
+      setScaleLoading(false)
     }
   }
 
@@ -1357,6 +1395,56 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         )}
                       </>
                     )}
+
+                    {/* Meal Prep Multiplier Section */}
+                    <div className="mb-3 p-3 bg-indigo-50 rounded-lg border border-indigo-200">
+                      <div className="flex items-center justify-between flex-wrap gap-2">
+                        <div>
+                          <p className="text-xs font-bold text-indigo-800">📦 Cook multiple portions</p>
+                          <p className="text-xs text-indigo-700">Scale ingredients for meal prep</p>
+                        </div>
+                        <div className="flex gap-2">
+                          {[1, 2, 3].map(mult => (
+                            <button
+                              key={mult}
+                              onClick={() => scaleMeal(meal, mult)}
+                              disabled={scaleLoading}
+                              className={`px-3 py-1 rounded-full text-xs font-bold transition ${
+                                scaledMealId === `${meal.name}@${meal.time}` && mealScaleMultiplier === mult
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-white text-indigo-600 border border-indigo-300 hover:bg-indigo-100'
+                              }`}>
+                              {mult}x
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      {/* Scaled Ingredients Display */}
+                      {scaledMealId === `${meal.name}@${meal.time}` && scaledMealIngredients.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-indigo-200">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            {scaledMealIngredients.map((ing, j) => (
+                              <div key={j} className="bg-white rounded px-2 py-1.5 text-xs">
+                                <p className="font-semibold text-gray-800">{ing.item}</p>
+                                <p className="text-indigo-700 font-bold">{ing.quantity} {ing.unit}</p>
+                                {ing.baseCost && ing.scaledCost && (
+                                  <p className="text-gray-500 text-xs mt-0.5">
+                                    {ing.baseCost}×{mealScaleMultiplier} = €{ing.scaledCost.toFixed(2)}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                          {scaledMealIngredients[0]?.totalCost && (
+                            <div className="mt-2 p-2 bg-white rounded border-l-4 border-green-500">
+                              <p className="text-xs text-gray-600">Total cost for {mealScaleMultiplier}x:</p>
+                              <p className="font-bold text-green-700">€{(scaledMealIngredients[0].totalCost * mealScaleMultiplier).toFixed(2)}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex gap-2">
                         <button onClick={() => toggleEaten(meal)}

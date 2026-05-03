@@ -1016,6 +1016,68 @@ Respond ONLY with valid JSON, no markdown:
   }
 })
 
+// ── v17.0 Priority 2: Scale meal ingredients for meal prep ──
+app.post('/api/scale-meal', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
+  try {
+    const { meal, multiplier = 1 } = req.body || {}
+    if (!meal || !multiplier || multiplier < 1) {
+      return res.status(400).json({ success: false, error: 'meal and multiplier required' })
+    }
+
+    // Parse ingredient strings and scale them
+    const ingredients = Array.isArray(meal.ingredients) ? meal.ingredients : []
+    const scaledIngredients = ingredients.map(ing => {
+      // Parse "2 cups sugar", "500g spinach", etc
+      const match = ing.match(/^([\d.]+)\s*([a-zA-Z]+)?\s+(.+)$/)
+      if (!match) return { item: ing, quantity: '?', unit: '', original: ing }
+
+      const qty = parseFloat(match[1])
+      const unit = (match[2] || '').toLowerCase()
+      const item = match[3]
+      const scaledQty = (qty * multiplier).toFixed(2).replace(/\.?0+$/, '')
+
+      // Smart unit conversion
+      let finalQty = scaledQty
+      let finalUnit = unit
+      if (unit === 'g' && scaledQty >= 1000) {
+        finalQty = (scaledQty / 1000).toFixed(2).replace(/\.?0+$/, '')
+        finalUnit = 'kg'
+      } else if (unit === 'ml' && scaledQty >= 1000) {
+        finalQty = (scaledQty / 1000).toFixed(2).replace(/\.?0+$/, '')
+        finalUnit = 'l'
+      } else if (unit === 'tsp' && scaledQty >= 3) {
+        finalQty = (scaledQty / 3).toFixed(2).replace(/\.?0+$/, '')
+        finalUnit = 'tbsp'
+      }
+
+      return {
+        item,
+        quantity: finalQty,
+        unit: finalUnit,
+        original: ing,
+        baseCost: Math.random() * 5, // Placeholder — in production would lookup from PRICE_DB
+      }
+    })
+
+    // Calculate total cost
+    const totalCost = scaledIngredients.reduce((sum, i) => sum + (i.baseCost || 0), 0)
+
+    posthog.capture('meal_scaled', { distinctId, meal_name: meal.name, multiplier })
+    res.json({
+      success: true,
+      scaledIngredients: scaledIngredients.map(i => ({
+        ...i,
+        totalCost,
+      })),
+    })
+  } catch (error) {
+    console.error('Scale meal error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/scale-meal' })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── Start Server ─────────────────────────────────────
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
