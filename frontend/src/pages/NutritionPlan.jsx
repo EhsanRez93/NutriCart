@@ -452,6 +452,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [recipeModal, setRecipeModal]     = useState(null) // meal object or null
   const [showBarcode, setShowBarcode]     = useState(false)
 
+  // ── v17.0 Priority 1: "Use what I have" smart replanning ──
+  const [pantryReplanLoading, setPantryReplanLoading] = useState(false)
+  const [pantryReplanError, setPantryReplanError] = useState(null)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -812,6 +816,40 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setReplanError('Backend not reachable.')
     } finally {
       setReplanLoading(false)
+    }
+  }
+
+  // ── v17.0: Regenerate plan to prioritize pantry items ──
+  async function replanUsingPantry() {
+    if (!aiMealPlan || !startDate || pantryItems.length === 0) return
+    setPantryReplanLoading(true)
+    setPantryReplanError(null)
+    try {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/replan-with-pantry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+        body: JSON.stringify({
+          profile: { ...profile, pantry: pantryItems },
+          currentPlan: aiMealPlan,
+          startDate: startDate,
+          pantryItems: pantryItems,
+        }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAiMealPlan(data.mealPlan)
+        await onSaveMealPlan(data.mealPlan, startDate)
+        posthog.capture('pantry_replan_generated', { pantry_items: pantryItems.length, days: data.mealPlan.days.length })
+      } else {
+        setPantryReplanError(data.error || 'Could not regenerate plan right now.')
+      }
+    } catch (err) {
+      setPantryReplanError('Backend not reachable. Please try again.')
+    } finally {
+      setPantryReplanLoading(false)
     }
   }
 
@@ -1678,6 +1716,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 {pantryLoading ? '⏳ Adding…' : '➕ Add item'}
               </button>
             </div>
+
+            {/* Regenerate plan button */}
+            {pantryItems.length > 0 && aiMealPlan && (
+              <div className="mb-6 p-4 bg-green-50 border-2 border-green-300 rounded-2xl">
+                {pantryReplanError && (
+                  <p className="text-red-600 text-sm mb-3">❌ {pantryReplanError}</p>
+                )}
+                <button
+                  onClick={replanUsingPantry}
+                  disabled={pantryReplanLoading}
+                  className="w-full bg-green-600 text-white px-6 py-3 rounded-full font-bold text-sm hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
+                  {pantryReplanLoading ? (
+                    <>⏳ Regenerating plan…</>
+                  ) : (
+                    <>🔄 Regenerate plan to use these items</>
+                  )}
+                </button>
+                <p className="text-xs text-green-700 mt-2 text-center">The AI will create meals using what you already have, saving time & money!</p>
+              </div>
+            )}
 
             {/* Items grouped by category */}
             {pantryItems.length === 0 ? (

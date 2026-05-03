@@ -906,6 +906,116 @@ Respond ONLY with valid JSON, no other text:
   }
 })
 
+// ── v17.0: Regenerate meal plan to prioritize pantry items ──
+app.post('/api/replan-with-pantry', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
+  try {
+    const { profile = {}, currentPlan, startDate, pantryItems = [] } = req.body || {}
+    if (!currentPlan || !Array.isArray(currentPlan.days)) {
+      return res.status(400).json({ success: false, error: 'currentPlan.days[] required' })
+    }
+    if (pantryItems.length === 0) {
+      return res.status(400).json({ success: false, error: 'No pantry items to plan with' })
+    }
+    
+    const client = getGroqClient()
+
+    // Build pantry list string
+    const pantryList = pantryItems
+      .map(p => {
+        const qty = p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''
+        const expiry = p.expiry_date ? ` [expires ${p.expiry_date}]` : ''
+        return `  - ${p.name}${qty}${expiry}`
+      })
+      .join('\n')
+
+    const daysStr = currentPlan.days.map(d => `  ${d.date} (${d.day || 'day'})`).join('\n')
+
+    const prompt = `You are a creative behavioral nutritionist AI for NutriCart. The user has specific ingredients at home and wants to plan meals around them to save time and money.
+
+USER PROFILE:
+- Goal: ${profile.goal}
+- Weight: ${profile.currentWeight}kg → target ${profile.targetWeight}kg
+- Daily targets: ${profile.calories || 2000} kcal · ${profile.protein || 100}g protein
+- Preferred store: ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
+- Symptoms to consider: ${(Array.isArray(profile.symptoms) ? profile.symptoms : []).join(', ') || 'none'}
+
+USER'S PANTRY (create meals PRIORITIZING these items first — they're already paid for and at home!):
+${pantryList}
+
+DAYS TO PLAN:
+${daysStr}
+
+IMPORTANT INSTRUCTIONS:
+1. Create meals that USE these pantry items prominently — aim for 60%+ of ingredients to come from the pantry
+2. Fill remaining ingredients with complementary items from store (for freshness, variety, nutrition balance)
+3. Keep each day hitting their nutrition targets (${profile.calories || 2000} kcal, ${profile.protein || 100}g protein roughly)
+4. Suggest meals in different categories (breakfast, lunch, dinner) to add variety
+5. Consider ingredient combinations that work well together
+
+Respond ONLY with valid JSON, no markdown:
+{
+  "futureDays": [
+    {
+      "date": "YYYY-MM-DD",
+      "day": "Monday|Tuesday|...",
+      "totalCalories": 2000,
+      "totalProtein": 100,
+      "meals": [
+        {
+          "meal": "breakfast|lunch|dinner|snack",
+          "time": "HH:MM",
+          "name": "Meal name",
+          "ingredients": ["item with qty", ...],
+          "calories": 500,
+          "protein": 20,
+          "carbs": 60,
+          "fats": 15,
+          "store": "store name or 'Pantry'",
+          "reason": "Why this meal uses your pantry items efficiently"
+        }
+      ],
+      "reason": "Why these meals make sense given your pantry + nutrition goals"
+    }
+  ],
+  "pantryUtilization": "Percentage of meals using pantry items"
+}`
+    
+    const response = await client.messages.create({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    })
+
+    const responseText = response.content[0]?.text || ''
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('No JSON in Groq response')
+    const parsed = JSON.parse(jsonMatch[0])
+
+    // Map days into currentPlan structure
+    const newMealPlan = {
+      ...currentPlan,
+      days: currentPlan.days.map(origDay => {
+        const newDay = parsed.futureDays.find(d => d.date === origDay.date)
+        if (!newDay) return origDay
+        return {
+          ...origDay,
+          ...newDay,
+          totalCalories: newDay.meals.reduce((s, m) => s + (+m.calories || 0), 0),
+          totalProtein: newDay.meals.reduce((s, m) => s + (+m.protein || 0), 0),
+        }
+      }),
+    }
+
+    posthog.capture('pantry_replan_generated', { distinctId, pantry_items: pantryItems.length, days: newMealPlan.days.length })
+    res.json({ success: true, mealPlan: newMealPlan, pantryUtilization: parsed.pantryUtilization })
+  } catch (error) {
+    console.error('Pantry replan error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/replan-with-pantry' })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── Start Server ─────────────────────────────────────
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
