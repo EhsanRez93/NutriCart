@@ -31,7 +31,38 @@ function getGroqClient() {
 }
 
 app.use(cors())
-app.use(express.json())
+app.use(express.json({ limit: '10mb' }))
+
+function normalizeReceiptItemName(name = '') {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function toCanonicalReceiptUnit(unit = '') {
+  const u = String(unit || '').toLowerCase().trim()
+  if (!u) return 'pcs'
+  if (u === 'pc' || u === 'piece' || u === 'pieces' || u === 'x' || u === 'ea') return 'pcs'
+  if (u === 'gram' || u === 'grams') return 'g'
+  if (u === 'kilogram' || u === 'kilograms') return 'kg'
+  if (u === 'milliliter' || u === 'milliliters' || u === 'millilitre' || u === 'millilitres') return 'ml'
+  if (u === 'liter' || u === 'liters' || u === 'litre' || u === 'litres') return 'l'
+  if (u === 'tablespoon' || u === 'tablespoons') return 'tbsp'
+  if (u === 'teaspoon' || u === 'teaspoons') return 'tsp'
+  return u
+}
+
+function mapReceiptCategoryToPantry(category = '', name = '') {
+  const c = String(category || '').toLowerCase()
+  const n = String(name || '').toLowerCase()
+  if (c.match(/meat|fish|seafood|frozen|ice cream/) || n.match(/chicken|beef|pork|salmon|tuna|fish|shrimp|frozen/)) return 'freezer'
+  if (c.match(/dairy|fruit|vegetable|produce|fresh/) || n.match(/milk|yogurt|cheese|butter|cream|kefir|spinach|broccoli|tomato|onion|potato|carrot|banana|apple|berry|fruit|vegetable/)) return 'fridge'
+  if (c.match(/spice|herb|seasoning|condiment/) || n.match(/salt|pepper|spice|herb|cinnamon|paprika|turmeric/)) return 'spices'
+  return 'pantry'
+}
 
 app.get('/health', (req, res) => {
   res.json({ status: 'NutriCart backend is running ✅' })
@@ -869,6 +900,126 @@ app.post('/api/prices', (req, res) => {
     res.json({ success: true, priced, total, store: targetStore })
   } catch (error) {
     console.error('Prices error:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── v19.0 Receipt OCR Route ─────────────────────────
+// Upload receipt photo (data URL), parse grocery lines with AI vision,
+// and return normalized pantry-ready items.
+app.post('/api/receipt-ocr', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
+  try {
+    const { imageDataUrl, storeHint = '' } = req.body || {}
+    if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
+      return res.status(400).json({ success: false, error: 'imageDataUrl (data:image/*;base64,...) is required' })
+    }
+    if (Buffer.byteLength(imageDataUrl, 'utf8') > 8 * 1024 * 1024) {
+      return res.status(413).json({ success: false, error: 'Image too large. Please use a smaller photo.' })
+    }
+
+    const client = getGroqClient()
+    const systemPrompt = `You are a grocery receipt OCR parser for a food pantry app.
+
+Task:
+1) Read the receipt image.
+2) Extract only food/ingredient items (ignore totals, taxes, loyalty lines, deposit fees, barcodes).
+3) Normalize each item to generic ingredient names in English lowercase.
+4) Parse quantity + unit when visible. If quantity is not visible, use quantity=1 and unit="pcs".
+5) Infer broad category for each item (e.g. fruits, vegetables, dairy, meat, fish, grains, oils, spices, pantry).
+6) Correct obvious OCR/store shorthand (e.g. Lidl SK/CZ abbreviations).
+
+Return ONLY valid JSON:
+{
+  "store": "string or empty",
+  "items": [
+    {
+      "name": "olive oil",
+      "quantity": 1,
+      "unit": "l",
+      "category": "oils",
+      "rawText": "optional raw line",
+      "confidence": 0.0
+    }
+  ]
+}
+
+Rules:
+- Keep units to: pcs, g, kg, ml, l, tsp, tbsp, cup, pack
+- quantity must be numeric
+- confidence range 0..1
+- Return JSON only, no markdown.`
+
+    const userPrompt = `Parse this grocery receipt image for pantry import. Store hint: ${storeHint || 'unknown'}`
+
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.2-11b-vision-preview',
+      temperature: 0.2,
+      max_tokens: 1600,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userPrompt },
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+    })
+
+    const responseText = completion.choices?.[0]?.message?.content || ''
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+    if (!jsonMatch) throw new Error('No JSON in receipt OCR response')
+    const parsed = JSON.parse(jsonMatch[0])
+
+    const rawItems = Array.isArray(parsed.items) ? parsed.items : []
+    const normalizedMap = {}
+    for (const item of rawItems) {
+      const name = normalizeReceiptItemName(item?.name)
+      if (!name) continue
+
+      let unit = toCanonicalReceiptUnit(item?.unit)
+      let quantity = Number(item?.quantity)
+      if (!Number.isFinite(quantity) || quantity <= 0) quantity = 1
+
+      // Normalize spoon/cup to ml for better pantry math.
+      if (unit === 'tbsp') { quantity = +(quantity * 15).toFixed(1); unit = 'ml' }
+      if (unit === 'tsp') { quantity = +(quantity * 5).toFixed(1); unit = 'ml' }
+      if (unit === 'cup') { quantity = +(quantity * 240).toFixed(1); unit = 'ml' }
+
+      const pantryCategory = mapReceiptCategoryToPantry(item?.category, name)
+      const key = `${name}|${unit}|${pantryCategory}`
+      if (!normalizedMap[key]) {
+        normalizedMap[key] = {
+          name,
+          quantity,
+          unit,
+          category: pantryCategory,
+          rawText: String(item?.rawText || ''),
+          confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0.7,
+        }
+      } else {
+        normalizedMap[key].quantity = +(normalizedMap[key].quantity + quantity).toFixed(3)
+        normalizedMap[key].confidence = Math.max(normalizedMap[key].confidence, Number(item?.confidence) || 0)
+      }
+    }
+
+    const items = Object.values(normalizedMap)
+
+    posthog.capture({
+      distinctId,
+      event: 'receipt_ocr_parsed',
+      properties: {
+        extracted_items: items.length,
+        store: parsed.store || storeHint || 'unknown',
+      },
+    })
+
+    res.json({ success: true, store: parsed.store || storeHint || '', items })
+  } catch (error) {
+    console.error('Receipt OCR error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/receipt-ocr' })
     res.status(500).json({ success: false, error: error.message })
   }
 })

@@ -1,5 +1,5 @@
 import posthog from 'posthog-js'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../supabase'
 import ShoppingList from './ShoppingList'
 import ScoreCard from './ScoreCard'
@@ -499,6 +499,11 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [pantryItems, setPantryItems] = useState([])
   const [pantryLoading, setPantryLoading] = useState(false)
   const [pantryDraft, setPantryDraft] = useState({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' })
+  const receiptInputRef = useRef(null)
+  const [receiptOcrLoading, setReceiptOcrLoading] = useState(false)
+  const [receiptOcrError, setReceiptOcrError] = useState(null)
+  const [receiptOcrItems, setReceiptOcrItems] = useState([])
+  const [receiptOcrStore, setReceiptOcrStore] = useState('')
   const [initialPantryQtyById, setInitialPantryQtyById] = useState({})
   const [stockWarnings, setStockWarnings] = useState([])
   const [mealConsumptionMap, setMealConsumptionMap] = useState({}) // key: day-{i}:{mealName}
@@ -1164,7 +1169,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   function mapShoppingCategoryToPantry(category = '') {
     const c = String(category).toLowerCase()
     if (c.includes('meat') || c.includes('fish')) return 'freezer'
-    if (c.includes('dairy') || c.includes('vegetables') || c.includes('fruits')) return 'fridge'
+    if (c.includes('dairy') || c.includes('vegetables') || c.includes('fruits') || c.includes('produce') || c.includes('fresh')) return 'fridge'
     if (c.includes('condiments') || c.includes('spices')) return 'spices'
     return 'pantry'
   }
@@ -1239,6 +1244,134 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setPantryLoading(false)
     setActiveTab('pantry')
     posthog.capture('bought_items_added_to_pantry', { added, updated, total: boughtItems.length })
+  }
+
+  function readFileAsDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result || ''))
+      reader.onerror = () => reject(new Error('Could not read file'))
+      reader.readAsDataURL(file)
+    })
+  }
+
+  async function parseReceiptImage(file) {
+    if (!file) return
+    if (!file.type?.startsWith('image/')) {
+      setReceiptOcrError('Please upload a photo file (jpg, png, heic).')
+      return
+    }
+    setReceiptOcrLoading(true)
+    setReceiptOcrError(null)
+    setReceiptOcrItems([])
+    try {
+      const imageDataUrl = await readFileAsDataUrl(file)
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/receipt-ocr', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+        body: JSON.stringify({ imageDataUrl, storeHint: profile.store?.[0] || profile.store || 'Lidl' }),
+      })
+      const data = await response.json()
+      if (!data.success) throw new Error(data.error || 'Could not parse receipt')
+      const parsedItems = Array.isArray(data.items) ? data.items : []
+      if (parsedItems.length === 0) {
+        setReceiptOcrError('No grocery items detected. Try a clearer, closer photo.')
+      } else {
+        setReceiptOcrItems(parsedItems)
+        setReceiptOcrStore(data.store || '')
+      }
+    } catch (err) {
+      setReceiptOcrError(err.message || 'Receipt OCR failed. Please try again.')
+    } finally {
+      setReceiptOcrLoading(false)
+      if (receiptInputRef.current) receiptInputRef.current.value = ''
+    }
+  }
+
+  async function addReceiptItemsToPantry(parsedItems = receiptOcrItems) {
+    if (!userId || !Array.isArray(parsedItems) || parsedItems.length === 0) return
+    setPantryLoading(true)
+    setReceiptOcrError(null)
+    let added = 0
+    let updated = 0
+    const localPantry = [...pantryItems]
+
+    for (const r of parsedItems) {
+      const name = stripAmountFromItemName(r.name || '')
+      if (!name) continue
+      let qtyToAdd = Number(r.quantity)
+      if (!Number.isFinite(qtyToAdd) || qtyToAdd <= 0) qtyToAdd = 1
+      let unit = toCanonicalUnit(r.unit || 'pcs')
+      if (unit === 'tbsp') { qtyToAdd = +(qtyToAdd * 15).toFixed(1); unit = 'ml' }
+      if (unit === 'tsp') { qtyToAdd = +(qtyToAdd * 5).toFixed(1); unit = 'ml' }
+      if (unit === 'cup') { qtyToAdd = +(qtyToAdd * 240).toFixed(1); unit = 'ml' }
+      const category = mapShoppingCategoryToPantry(r.category || 'pantry')
+
+      const existing = localPantry.find(p => {
+        if (normalizeItemText(p.name) !== normalizeItemText(name)) return false
+        const pUnit = toCanonicalUnit(p.unit || unit)
+        return pUnit === unit || Number.isFinite(convertToUnit(qtyToAdd, unit, pUnit)) || (pUnit === 'pcs' && unit !== 'pcs')
+      })
+
+      if (existing) {
+        const existingUnit = toCanonicalUnit(existing.unit || unit)
+        let qtyForExisting = convertToUnit(qtyToAdd, unit, existingUnit)
+        let patchUnit = existing.unit || existingUnit
+        if (!Number.isFinite(qtyForExisting) && existingUnit === 'pcs' && unit !== 'pcs') {
+          qtyForExisting = qtyToAdd
+          patchUnit = unit
+        }
+        if (!Number.isFinite(qtyForExisting)) continue
+
+        const current = Number(existing.quantity)
+        const nextQty = +((Number.isFinite(current) ? current : 0) + qtyForExisting).toFixed(3)
+        await updatePantryItem(existing.id, {
+          quantity: nextQty,
+          category: existing.category || category,
+          unit: patchUnit,
+        })
+        existing.quantity = nextQty
+        existing.category = existing.category || category
+        existing.unit = patchUnit
+        setInitialPantryQtyById(prev => {
+          const baseline = Number(prev[existing.id])
+          return { ...prev, [existing.id]: Math.max(Number.isFinite(baseline) ? baseline : 0, nextQty) }
+        })
+        updated++
+      } else {
+        const payload = {
+          user_id: userId,
+          name,
+          quantity: qtyToAdd,
+          unit,
+          category,
+          expiry_date: null,
+        }
+        const { data, error } = await supabase.from('pantry_items').insert(payload).select().single()
+        if (data && !error) {
+          setPantryItems(prev => [data, ...prev])
+          localPantry.unshift(data)
+          if (Number.isFinite(Number(data.quantity))) {
+            setInitialPantryQtyById(prev => ({ ...prev, [data.id]: Number(data.quantity) }))
+          }
+          added++
+        }
+      }
+    }
+
+    setPantryLoading(false)
+    setReceiptOcrItems([])
+    setReceiptOcrStore('')
+    setActiveTab('pantry')
+    posthog.capture('receipt_ocr_items_added_to_pantry', {
+      added,
+      updated,
+      total: parsedItems.length,
+      store: receiptOcrStore || 'unknown',
+    })
   }
 
   // Helper: find pantry items expiring within N days
@@ -2631,12 +2764,50 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             <div className="bg-white rounded-2xl p-5 shadow-sm mb-6">
               <div className="flex items-center justify-between mb-3">
                 <h3 className="font-bold text-gray-800">➕ Add to pantry</h3>
-                <button
-                  onClick={() => setShowBarcode(true)}
-                  className="flex items-center gap-1.5 text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-200 transition">
-                  📷 Scan Barcode
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => receiptInputRef.current?.click()}
+                    disabled={receiptOcrLoading}
+                    className="flex items-center gap-1.5 text-xs font-bold bg-emerald-100 text-emerald-700 px-3 py-1.5 rounded-full hover:bg-emerald-200 transition disabled:opacity-60">
+                    {receiptOcrLoading ? '⏳ Reading receipt...' : '🧾 Scan Receipt'}
+                  </button>
+                  <button
+                    onClick={() => setShowBarcode(true)}
+                    className="flex items-center gap-1.5 text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-200 transition">
+                    📷 Scan Barcode
+                  </button>
+                </div>
               </div>
+              <input
+                ref={receiptInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={e => parseReceiptImage(e.target.files?.[0])}
+                className="hidden"
+              />
+              {receiptOcrError && <p className="text-xs text-red-600 mb-2">❌ {receiptOcrError}</p>}
+              {receiptOcrItems.length > 0 && (
+                <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                  <p className="text-xs font-bold text-emerald-800">🧾 Receipt parsed{receiptOcrStore ? ` · ${receiptOcrStore}` : ''} · {receiptOcrItems.length} items</p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {receiptOcrItems.slice(0, 8).map((it, idx) => (
+                      <span key={`${it.name}-${idx}`} className="text-xs bg-white border border-emerald-200 text-emerald-700 px-2 py-1 rounded-full">
+                        {it.name} ({formatAmount(Number(it.quantity) || 1, it.unit || 'pcs')})
+                      </span>
+                    ))}
+                    {receiptOcrItems.length > 8 && (
+                      <span className="text-xs text-emerald-700 font-semibold px-1">+{receiptOcrItems.length - 8} more</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => addReceiptItemsToPantry(receiptOcrItems)}
+                    disabled={pantryLoading}
+                    className="mt-3 w-full sm:w-auto bg-emerald-600 text-white px-5 py-2 rounded-full font-bold text-sm hover:bg-emerald-700 transition disabled:opacity-50">
+                    {pantryLoading ? '⏳ Importing…' : `🧺 Add ${receiptOcrItems.length} receipt items to pantry`}
+                  </button>
+                </div>
+              )}
               <div className="grid grid-cols-12 gap-2">
                 <input type="text" placeholder="Item name (e.g. spinach)"
                   value={pantryDraft.name}
