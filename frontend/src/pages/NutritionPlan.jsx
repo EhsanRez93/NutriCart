@@ -2819,7 +2819,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {receiptOcrItems.slice(0, 8).map((it, idx) => (
                       <span key={`${it.name}-${idx}`} className="text-xs bg-white border border-emerald-200 text-emerald-700 px-2 py-1 rounded-full">
-                        {it.name} ({formatAmount(Number(it.quantity) || 1, it.unit || 'pcs')})
+                        {it.name} ({`${Number(it.quantity) || 1}${it.unit || 'pcs'}`})
                       </span>
                     ))}
                     {receiptOcrItems.length > 8 && (
