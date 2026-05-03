@@ -1255,30 +1255,43 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   async function markCookNowCooked() {
     if (!cookNowRecipe || cookNowUsed) return
     const usedIngredients = cookNowRecipe.usedIngredients || []
-    // Treat each ingredient string the same way getMealPantryRequirements does
-    const fakeMeal = { items: usedIngredients }
-    const requirements = getMealPantryRequirements(fakeMeal)
-    for (const req of requirements) {
-      const item = pantryItems.find(p => p.id === req.id)
-      if (!item) continue
-      const available = Number(item.quantity)
+    let deductedCount = 0
+    for (const ing of usedIngredients) {
+      // Support both old string format and new {name, qty} format
+      const ingName = typeof ing === 'object' ? ing.name : ing
+      const ingQty  = typeof ing === 'object' ? ing.qty  : null
+      // Find matching pantry item
+      const match = pantryItems
+        .filter(p => {
+          const pn = String(p.name || '').toLowerCase()
+          const ign = String(ingName || '').toLowerCase()
+          return pn.includes(ign) || ign.includes(pn)
+        })
+        .sort((a, b) => String(b.name).length - String(a.name).length)[0]
+      if (!match) continue
+      const available = Number(match.quantity)
       if (!Number.isFinite(available)) continue
-      const nextQty = Math.max(0, +(available - req.neededQty).toFixed(3))
-      await updatePantryItem(req.id, { quantity: nextQty })
-
-      const initial = Number(initialPantryQtyById[item.id])
+      // Parse the qty string from AI (e.g. "150g", "2 tbsp", "1 pcs") or fall back to 1
+      const parsed = ingQty ? parseItemAmount(ingQty) : { qty: 1, unit: 'pcs' }
+      const pantryUnit = toCanonicalUnit(match.unit || parsed.unit || 'pcs')
+      const converted = convertToUnit(parsed.qty, parsed.unit, pantryUnit)
+      const deductQty = Number.isFinite(converted) ? converted : parsed.qty
+      const nextQty = Math.max(0, +(available - deductQty).toFixed(3))
+      await updatePantryItem(match.id, { quantity: nextQty })
+      deductedCount++
+      const initial = Number(initialPantryQtyById[match.id])
       if (Number.isFinite(initial) && initial > 0) {
         const threshold = initial * 0.2
         if (available > threshold && nextQty <= threshold && nextQty > 0) {
-          pushStockWarning({ key: `low:${item.id}`, type: 'low', itemName: item.name, qtyLeft: nextQty, unit: item.unit || '', time: Date.now() })
+          pushStockWarning({ key: `low:${match.id}`, type: 'low', itemName: match.name, qtyLeft: nextQty, unit: match.unit || '', time: Date.now() })
         }
         if (nextQty <= 0) {
-          pushStockWarning({ key: `out:${item.id}`, type: 'out', itemName: item.name, qtyLeft: 0, unit: item.unit || '', time: Date.now() })
+          pushStockWarning({ key: `out:${match.id}`, type: 'out', itemName: match.name, qtyLeft: 0, unit: match.unit || '', time: Date.now() })
         }
       }
     }
     setCookNowUsed(true)
-    posthog.capture('cook_now_pantry_deducted', { recipe: cookNowRecipe.name, items_deducted: requirements.length })
+    posthog.capture('cook_now_pantry_deducted', { recipe: cookNowRecipe.name, items_deducted: deductedCount })
   }
 
   // ── v17.0: Scale meal ingredients for meal prep (2x, 3x, etc) ──
@@ -2321,16 +2334,54 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         </div>
                       ))}
                     </div>
-                    {cookNowRecipe.usedIngredients?.length > 0 && (
-                      <div className="mb-3">
-                        <p className="text-xs font-bold text-gray-500 mb-1.5">✅ Using from your pantry</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {cookNowRecipe.usedIngredients.map((ing, i) => (
-                            <span key={i} className="text-xs bg-green-50 border border-green-200 text-green-700 px-2 py-1 rounded-lg">{ing}</span>
-                          ))}
+                    {cookNowRecipe.usedIngredients?.length > 0 && (() => {
+                      // Validate each used ingredient against actual pantry items
+                      const inPantry = []
+                      const notInPantry = []
+                      for (const ing of cookNowRecipe.usedIngredients) {
+                        const name = typeof ing === 'object' ? ing.name : ing
+                        const found = pantryItems.some(p =>
+                          String(p.name || '').toLowerCase().includes(String(name || '').toLowerCase()) ||
+                          String(name || '').toLowerCase().includes(String(p.name || '').toLowerCase())
+                        )
+                        if (found) inPantry.push(ing)
+                        else notInPantry.push(ing)
+                      }
+                      return (
+                        <div className="mb-3 space-y-2">
+                          {inPantry.length > 0 && (
+                            <div>
+                              <p className="text-xs font-bold text-gray-500 mb-1.5">✅ In your pantry</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {inPantry.map((ing, i) => {
+                                  const name = typeof ing === 'object' ? ing.name : ing
+                                  const qty  = typeof ing === 'object' ? ing.qty  : null
+                                  return (
+                                    <span key={i} className="text-xs bg-green-50 border border-green-200 text-green-700 px-2 py-1 rounded-lg">
+                                      {name}{qty ? ` — ${qty}` : ''}
+                                    </span>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                          {notInPantry.length > 0 && (
+                            <div className="bg-red-50 border border-red-200 rounded-xl px-3 py-2">
+                              <p className="text-xs font-bold text-red-700 mb-1.5">⚠️ Not found in pantry</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {notInPantry.map((ing, i) => {
+                                  const name = typeof ing === 'object' ? ing.name : ing
+                                  return (
+                                    <span key={i} className="text-xs bg-white border border-red-200 text-red-600 px-2 py-1 rounded-lg">{name}</span>
+                                  )
+                                })}
+                              </div>
+                              <p className="text-xs text-red-500 mt-1.5">Add these to your pantry first, or generate another recipe.</p>
+                            </div>
+                          )}
                         </div>
-                      </div>
-                    )}
+                      )
+                    })()}
                     {cookNowRecipe.missingIngredients?.length > 0 && (
                       <div className="mb-3">
                         <p className="text-xs font-bold text-gray-500 mb-1.5">🛒 You may also need</p>

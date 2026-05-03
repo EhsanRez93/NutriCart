@@ -1307,14 +1307,19 @@ Return ONLY valid JSON matching this schema:
   "protein": 30,
   "carbs": 40,
   "fats": 15,
-  "usedIngredients": ["ingredient1", "ingredient2"],
+  "usedIngredients": [
+    { "name": "chicken breast", "qty": "150g" },
+    { "name": "olive oil", "qty": "1 tbsp" }
+  ],
   "missingIngredients": ["salt", "pepper"],
   "steps": [
     { "step": 1, "icon": "🔪", "title": "Chop the onion", "instruction": "Dice one small onion finely.", "duration": "2 min" },
     { "step": 2, "icon": "🔥", "title": "Heat the pan", "instruction": "Warm olive oil over medium heat for 1 minute.", "duration": "1 min" }
   ],
   "tip": "Optional short cooking tip"
-}`
+}
+
+IMPORTANT: usedIngredients MUST only contain ingredients that are in the pantry list provided. Each entry must have "name" (matching the pantry item name) and "qty" (the amount used, e.g. "150g", "2 tbsp", "1 pcs").`
 
     const userPrompt = `My pantry/fridge contains: ${pantryList}
 ${profile.goal ? `My goal: ${profile.goal}` : ''}
