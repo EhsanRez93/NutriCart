@@ -695,12 +695,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     const to = toCanonicalUnit(toUnit)
     if (!Number.isFinite(qty)) return null
     if (!from || !to || from === to) return qty
+
+    // Mass conversions
     if (from === 'kg' && to === 'g') return qty * 1000
     if (from === 'g' && to === 'kg') return qty / 1000
-    if (from === 'l' && to === 'ml') return qty * 1000
-    if (from === 'ml' && to === 'l') return qty / 1000
-    if (from === 'tbsp' && to === 'tsp') return qty * 3
-    if (from === 'tsp' && to === 'tbsp') return qty / 3
+
+    // Volume conversions via ml base unit
+    const volumeToMl = {
+      ml: 1,
+      l: 1000,
+      tsp: 5,
+      tbsp: 15,
+      cup: 240,
+    }
+    if (volumeToMl[from] && volumeToMl[to]) {
+      return (qty * volumeToMl[from]) / volumeToMl[to]
+    }
+
+    // Piece-like units
+    if ((from === 'pack' && to === 'pcs') || (from === 'pcs' && to === 'pack')) return qty
+
     return null
   }
 
