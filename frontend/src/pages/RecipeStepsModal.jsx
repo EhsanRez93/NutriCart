@@ -71,6 +71,11 @@ export default function RecipeStepsModal({ meal, userId, onClose }) {
               <div className="flex items-center gap-2 mb-1 flex-wrap">
                 <span className="text-2xl">{mealIcon(meal.meal)}</span>
                 <span className="text-xs font-bold text-gray-400 uppercase tracking-wider">{meal.meal}</span>
+                {(meal.multiplier || 1) > 1 && (
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full border bg-indigo-100 text-indigo-700 border-indigo-300">
+                    {meal.multiplier}x portions
+                  </span>
+                )}
                 {recipe && (
                   <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${diff.bg} ${diff.text} ${diff.border}`}>
                     {recipe.difficulty}

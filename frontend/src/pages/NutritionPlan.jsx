@@ -908,6 +908,34 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     }
   }
 
+  function getScaledMealForCooking(meal) {
+    const mealId = `${meal.name}@${meal.time}`
+    const isScaledSelection =
+      scaledMealId === mealId &&
+      mealScaleMultiplier > 1 &&
+      Array.isArray(scaledMealIngredients) &&
+      scaledMealIngredients.length > 0
+
+    if (!isScaledSelection) return { ...meal, multiplier: 1 }
+
+    const scaledItems = scaledMealIngredients.map((ing) => {
+      const qty = ing.quantity ? `${ing.quantity}` : ''
+      const unit = ing.unit ? ` ${ing.unit}` : ''
+      const item = ing.item || ''
+      return `${qty}${unit} ${item}`.trim()
+    })
+
+    return {
+      ...meal,
+      items: scaledItems,
+      calories: Math.round((+meal.calories || 0) * mealScaleMultiplier),
+      protein: Math.round((+meal.protein || 0) * mealScaleMultiplier),
+      carbs: Math.round((+meal.carbs || 0) * mealScaleMultiplier),
+      fats: Math.round((+meal.fats || 0) * mealScaleMultiplier),
+      multiplier: mealScaleMultiplier,
+    }
+  }
+
   // ── v17.0 Priority 3: Fetch price history for an item ──
   async function showPriceHistory(itemName) {
     setPriceLoading(true)
@@ -1500,7 +1528,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         <button onClick={() => handleSwapMeal(meal)} className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition">🔄 Swap this meal</button>
                       )}
                       <button
-                        onClick={() => setRecipeModal(meal)}
+                        onClick={() => setRecipeModal(getScaledMealForCooking(meal))}
                         className="text-xs text-green-700 font-semibold hover:text-green-800 transition">
                         🍳 Cook this
                       </button>
