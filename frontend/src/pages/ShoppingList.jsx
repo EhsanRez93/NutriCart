@@ -445,7 +445,7 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
                     {item.name}
                     {item.amountLabel && <span className="ml-1 text-xs text-gray-500 font-semibold">({item.amountLabel})</span>}
                   </span>
-                  {item.count > 1 && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{item.count}x week</span>}
+
                   <span className="text-xs text-gray-500">€{price}</span>
                   <span className="text-xs text-green-600 font-semibold">{activeStore}</span>
                   {onShowPriceHistory && (
