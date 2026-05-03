@@ -6,6 +6,7 @@ import ScoreCard from './ScoreCard'
 import ProgressTracker from './ProgressTracker'
 import RecipeStepsModal from './RecipeStepsModal'
 import BarcodeScanner from './BarcodeScanner'
+import PriceHistoryModal from './PriceHistoryModal'
 import {
   fetchHolidaysWindow,
   findHoliday,
@@ -462,6 +463,12 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [scaledMealIngredients, setScaledMealIngredients] = useState([])
   const [scaleLoading, setScaleLoading] = useState(false)
 
+  // ── v17.0 Priority 3: Price history & prediction ──
+  const [priceHistoryItem, setPriceHistoryItem] = useState(null) // null or { name, store }
+  const [priceHistory, setPriceHistory] = useState([])
+  const [priceStats, setPriceStats] = useState(null)
+  const [priceLoading, setPriceLoading] = useState(false)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -888,6 +895,29 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       console.error('Scale meal error:', err)
     } finally {
       setScaleLoading(false)
+    }
+  }
+
+  // ── v17.0 Priority 3: Fetch price history for an item ──
+  async function showPriceHistory(itemName) {
+    setPriceLoading(true)
+    setPriceHistoryItem({ name: itemName, store: profile.store?.[0] || 'Lidl' })
+    try {
+      const response = await fetch(`https://nutricart-production-cd53.up.railway.app/api/price-history/${encodeURIComponent(itemName)}?store=${profile.store?.[0] || 'Lidl'}&days=90`, {
+        headers: {
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+      })
+      const data = await response.json()
+      if (data.success) {
+        setPriceHistory(data.history || [])
+        setPriceStats(data.stats || {})
+        posthog.capture('price_history_viewed', { item: itemName })
+      }
+    } catch (err) {
+      console.error('Price history error:', err)
+    } finally {
+      setPriceLoading(false)
     }
   }
 
@@ -1922,7 +1952,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
           </div>
         )}
 
-        {activeTab === 'shopping' && <ShoppingList profile={profile} aiMealPlan={aiMealPlan} />}
+        {activeTab === 'shopping' && <ShoppingList profile={profile} aiMealPlan={aiMealPlan} onShowPriceHistory={showPriceHistory} />}
         {activeTab === 'progress' && (
           <ProgressTracker profile={profile} userId={userId} />
         )}
@@ -1962,6 +1992,17 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             posthog.capture('barcode_scanned', { product_name: product.name, barcode: product.barcode })
           }}
           onClose={() => setShowBarcode(false)}
+        />
+      )}
+
+      {/* v17.0 Price History Modal */}
+      {priceHistoryItem && (
+        <PriceHistoryModal
+          itemName={priceHistoryItem.name}
+          history={priceHistory}
+          stats={priceStats}
+          loading={priceLoading}
+          onClose={() => setPriceHistoryItem(null)}
         />
       )}
 

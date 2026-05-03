@@ -71,7 +71,7 @@ const staticDayPlan = [
   { meal: 'Dinner',    items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
 ]
 
-export default function ShoppingList({ profile, aiMealPlan }) {
+export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory }) {
   const rawItems      = extractIngredients(aiMealPlan, staticDayPlan)
   const [items, setItems]           = useState(rawItems)
   const [mode, setMode]             = useState('manual') // 'manual' | 'ai'
@@ -322,6 +322,14 @@ export default function ShoppingList({ profile, aiMealPlan }) {
                   {item.count > 1 && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{item.count}x week</span>}
                   <span className="text-xs text-gray-500">€{price}</span>
                   <span className="text-xs text-green-600 font-semibold">{activeStore}</span>
+                  {onShowPriceHistory && (
+                    <button
+                      onClick={() => onShowPriceHistory(item.name)}
+                      className="text-xs text-blue-500 hover:text-blue-700 transition font-semibold ml-1"
+                      title="View price history">
+                      📈
+                    </button>
+                  )}
                 </div>
               )
             })}
