@@ -569,7 +569,12 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false })
-      if (data && !error) setPantryItems(data)
+      if (error) {
+        console.error('❌ Pantry load error:', error)
+      } else {
+        console.log('📦 Pantry loaded:', data?.length || 0, 'items')
+        if (data) setPantryItems(data)
+      }
     }
     loadPantry()
   }, [userId])
@@ -875,6 +880,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setScaledMealId(mealId)
       setMealScaleMultiplier(multiplier)
       
+      console.log('🍳 Scaling meal:', meal.name, 'x', multiplier, 'items:', meal.items)
+      
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/scale-meal', {
         method: 'POST',
         headers: {
@@ -887,12 +894,15 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         }),
       })
       const data = await response.json()
+      console.log('📊 Scale response:', data)
       if (data.success) {
         setScaledMealIngredients(data.scaledIngredients)
         posthog.capture('meal_scaled', { meal_name: meal.name, multiplier })
+      } else {
+        console.error('❌ Scale error:', data.error)
       }
     } catch (err) {
-      console.error('Scale meal error:', err)
+      console.error('❌ Scale meal error:', err)
     } finally {
       setScaleLoading(false)
     }
@@ -1768,6 +1778,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <p className="text-3xl font-extrabold text-purple-700">{pantryItems.length}</p>
               </div>
             </div>
+
+            {/* What you have summary */}
+            {pantryItems.length > 0 && (
+              <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl px-5 py-4 mb-6">
+                <p className="text-purple-900 font-bold text-sm mb-3">📦 What you have</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {['fridge', 'freezer', 'pantry', 'spices'].map(cat => {
+                    const count = pantryItems.filter(p => (p.category || 'pantry') === cat).length
+                    const icons = { fridge: '🥬', freezer: '🧊', pantry: '🥫', spices: '🧂' }
+                    return count > 0 ? (
+                      <div key={cat} className="bg-white rounded-lg p-3 text-center">
+                        <p className="text-2xl">{icons[cat]}</p>
+                        <p className="text-xs font-bold text-purple-700 mt-1 capitalize">{cat}</p>
+                        <p className="text-sm font-bold text-purple-900">{count}</p>
+                      </div>
+                    ) : null
+                  })}
+                </div>
+              </div>
+            )}
 
             {/* Expiring soon banner */}
             {expiringPantry(3).length > 0 && (
