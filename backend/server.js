@@ -3,6 +3,7 @@ const cors      = require('cors')
 const dotenv    = require('dotenv')
 const Groq      = require('groq-sdk')
 const axios     = require('axios')
+const multer    = require('multer')
 const { PostHog } = require('posthog-node')
 
 dotenv.config()
@@ -71,6 +72,11 @@ async function createReceiptVisionCompletion(client, { messages, temperature = 0
 
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
+
+const receiptUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+})
 
 function normalizeReceiptItemName(name = '') {
   return String(name || '')
@@ -992,12 +998,20 @@ app.post('/api/prices', (req, res) => {
 // ── v19.0 Receipt OCR Route ─────────────────────────
 // Upload receipt photo (data URL), parse grocery lines with AI vision,
 // and return normalized pantry-ready items.
-app.post('/api/receipt-ocr', async (req, res) => {
+app.post('/api/receipt-ocr', receiptUpload.single('receipt'), async (req, res) => {
   const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
-    const { imageDataUrl, storeHint = '' } = req.body || {}
-    if (!imageDataUrl || typeof imageDataUrl !== 'string' || !imageDataUrl.startsWith('data:image/')) {
-      return res.status(400).json({ success: false, error: 'imageDataUrl (data:image/*;base64,...) is required' })
+    const body = req.body || {}
+    const storeHint = String(body.storeHint || '')
+
+    let imageDataUrl = String(body.imageDataUrl || '')
+    if (req.file?.buffer?.length) {
+      const mime = req.file.mimetype || 'image/jpeg'
+      imageDataUrl = `data:${mime};base64,${req.file.buffer.toString('base64')}`
+    }
+
+    if (!imageDataUrl || !imageDataUrl.startsWith('data:image/')) {
+      return res.status(400).json({ success: false, error: 'Upload receipt image as multipart field "receipt" (preferred) or imageDataUrl' })
     }
     if (Buffer.byteLength(imageDataUrl, 'utf8') > 8 * 1024 * 1024) {
       return res.status(413).json({ success: false, error: 'Image too large. Please use a smaller photo.' })

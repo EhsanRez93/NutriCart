@@ -1248,57 +1248,6 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     posthog.capture('bought_items_added_to_pantry', { added, updated, total: boughtItems.length })
   }
 
-  function readFileAsDataUrl(file) {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader()
-      reader.onload = () => resolve(String(reader.result || ''))
-      reader.onerror = () => reject(new Error('Could not read file'))
-      reader.readAsDataURL(file)
-    })
-  }
-
-  async function fileToOptimizedDataUrl(file) {
-    // Camera photos can be very large and crash low-memory mobile tabs.
-    // Downscale + compress before sending to backend OCR.
-    const maxSide = 1600
-    const quality = 0.82
-
-    try {
-      const objectUrl = URL.createObjectURL(file)
-      const img = await new Promise((resolve, reject) => {
-        const image = new Image()
-        image.onload = () => resolve(image)
-        image.onerror = () => reject(new Error('Could not decode image'))
-        image.src = objectUrl
-      })
-
-      const w = img.naturalWidth || img.width
-      const h = img.naturalHeight || img.height
-      if (!w || !h) {
-        URL.revokeObjectURL(objectUrl)
-        return readFileAsDataUrl(file)
-      }
-
-      const scale = Math.min(1, maxSide / Math.max(w, h))
-      const targetW = Math.max(1, Math.round(w * scale))
-      const targetH = Math.max(1, Math.round(h * scale))
-
-      const canvas = document.createElement('canvas')
-      canvas.width = targetW
-      canvas.height = targetH
-      const ctx = canvas.getContext('2d')
-      if (!ctx) {
-        URL.revokeObjectURL(objectUrl)
-        return readFileAsDataUrl(file)
-      }
-      ctx.drawImage(img, 0, 0, targetW, targetH)
-      const dataUrl = canvas.toDataURL('image/jpeg', quality)
-      URL.revokeObjectURL(objectUrl)
-      return dataUrl
-    } catch {
-      return readFileAsDataUrl(file)
-    }
-  }
 
   async function parseReceiptImage(file) {
     if (!file) return
@@ -1310,14 +1259,16 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setReceiptOcrError(null)
     setReceiptOcrItems([])
     try {
-      const imageDataUrl = await fileToOptimizedDataUrl(file)
+      const form = new FormData()
+      form.append('receipt', file)
+      form.append('storeHint', profile.store?.[0] || profile.store || 'Lidl')
+
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/receipt-ocr', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
           'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
         },
-        body: JSON.stringify({ imageDataUrl, storeHint: profile.store?.[0] || profile.store || 'Lidl' }),
+        body: form,
       })
       const data = await response.json().catch(() => ({ success: false, error: `OCR failed (${response.status})` }))
       if (!data.success) throw new Error(data.error || 'Could not parse receipt')
