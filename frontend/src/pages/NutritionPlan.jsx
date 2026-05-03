@@ -660,6 +660,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const eatenToday      = eatenMeals[todayKey]   || {}
   const skippedToday    = skippedMeals[todayKey] || {}
   const firstUpcomingMealName = currentDayMeals.find(m => !(eatenMeals[todayKey] || {})[m.name] && !(skippedMeals[todayKey] || {})[m.name])?.name
+  const stockWarningStorageKey = `nutricart:stockWarnings:${userId || 'anon'}:${todayKey}`
 
   const actualIntake = {
     calories: Object.values(eatenToday).reduce((s, m) => s + (m.calories || 0), 0),
@@ -753,12 +754,51 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     })
   }
 
+  function getOutOfStockForMeal(meal) {
+    const reqs = getMealPantryRequirements(meal)
+    const out = reqs
+      .filter(r => {
+        const item = pantryItems.find(p => p.id === r.id)
+        const available = Number(item?.quantity)
+        return Number.isFinite(available) && available <= 0
+      })
+      .map(r => String(r.name || '').toLowerCase())
+    return Array.from(new Set(out))
+  }
+
   function pushStockWarning(warning) {
     setStockWarnings(prev => {
       if (prev.some(w => w.key === warning.key)) return prev
       return [warning, ...prev].slice(0, 5)
     })
   }
+
+  const firstUpcomingMeal = currentDayMeals.find(m => m.name === firstUpcomingMealName)
+  const persistentOutOfStockWarning = firstUpcomingMeal && isMealBlockedByPantry(firstUpcomingMeal)
+    ? {
+        key: `persist:${todayKey}:${firstUpcomingMeal.name}`,
+        type: 'out',
+        itemName: getOutOfStockForMeal(firstUpcomingMeal).join(', ') || firstUpcomingMeal.name,
+        qtyLeft: 0,
+        unit: '',
+      }
+    : null
+  const visibleStockWarning = stockWarnings[0] || persistentOutOfStockWarning
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(stockWarningStorageKey)
+      if (!raw) return
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) setStockWarnings(parsed)
+    } catch (_) {}
+  }, [stockWarningStorageKey])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(stockWarningStorageKey, JSON.stringify(stockWarnings))
+    } catch (_) {}
+  }, [stockWarnings, stockWarningStorageKey])
 
   // ── Toggle eaten — saves to Supabase ──
   async function toggleEaten(meal) {
@@ -952,9 +992,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setSwapMode(mode)
     setSwapMeal(meal); setSwapLoading(true); setAlternatives([])
     try {
+      const outOfStockItems = getOutOfStockForMeal(meal)
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/swapmeal', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
-        body: JSON.stringify({ meal, profile, swapMode: mode, pantryItems })
+        body: JSON.stringify({ meal, profile, swapMode: mode, pantryItems, outOfStockItems })
       })
       const data = await response.json()
       if (data.success) setAlternatives(data.alternatives)
@@ -1683,15 +1724,15 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             })()}
 
             <div className="space-y-4 mb-8">
-              {stockWarnings.length > 0 && (
+              {visibleStockWarning && (
                 <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl px-4 py-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-amber-800 font-bold text-sm">⚠ Pantry stock alert</p>
                       <p className="text-amber-700 text-xs mt-0.5">
-                        {stockWarnings[0].type === 'low' && `Running low on ${stockWarnings[0].itemName} (${stockWarnings[0].qtyLeft}${stockWarnings[0].unit || ''} left)`}
-                        {stockWarnings[0].type === 'out' && `${stockWarnings[0].itemName} is out of stock`}
-                        {stockWarnings[0].type === 'blocked' && `Cannot mark this meal as eaten until pantry items are replenished`}
+                        {visibleStockWarning.type === 'low' && `Running low on ${visibleStockWarning.itemName} (${visibleStockWarning.qtyLeft}${visibleStockWarning.unit || ''} left)`}
+                        {visibleStockWarning.type === 'out' && `${visibleStockWarning.itemName} is out of stock`}
+                        {visibleStockWarning.type === 'blocked' && `Cannot mark this meal as eaten until pantry items are replenished`}
                       </p>
                     </div>
                     <button

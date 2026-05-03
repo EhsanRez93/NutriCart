@@ -185,16 +185,24 @@ ${expiringSoon.length > 0 ? `- Items expiring within 3 days MUST appear in the f
 app.post('/api/swapmeal', async (req, res) => {
   const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
-    const { meal, profile, swapMode = 'ai_suggested', pantryItems = [] } = req.body
+    const { meal, profile, swapMode = 'ai_suggested', pantryItems = [], outOfStockItems = [] } = req.body
     const client = getGroqClient()
 
     const selectedSwapMode = swapMode === 'pantry_based' ? 'pantry_based' : 'ai_suggested'
-    const pantryList = Array.isArray(pantryItems) && pantryItems.length > 0
-      ? pantryItems.map(p => `- ${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}`).join('\n')
+    const usablePantryItems = (Array.isArray(pantryItems) ? pantryItems : []).filter(p => {
+      const q = Number(p?.quantity)
+      return !Number.isFinite(q) || q > 0
+    })
+    const blockedItems = Array.isArray(outOfStockItems)
+      ? outOfStockItems.map(i => String(i || '').toLowerCase().trim()).filter(Boolean)
+      : []
+
+    const pantryList = usablePantryItems.length > 0
+      ? usablePantryItems.map(p => `- ${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}`).join('\n')
       : '- (no pantry items available)'
 
     const swapModeInstruction = selectedSwapMode === 'pantry_based'
-      ? 'Build alternatives mainly from available pantry items; only add missing extras if strictly needed for nutrition balance.'
+      ? 'Build alternatives mainly from available pantry items; only add missing extras if strictly needed for nutrition balance. Never include any out-of-stock ingredient.'
       : 'Use fully AI-suggested alternatives (not constrained by pantry inventory), still aligned to goals and preferred store.'
 
     const prompt = `You are a professional nutritionist AI for NutriCart app.
@@ -213,6 +221,9 @@ The user does not like this meal:
 
 Available pantry items:
 ${pantryList}
+
+Out-of-stock items that MUST NOT appear in pantry-based alternatives:
+${blockedItems.length > 0 ? blockedItems.map(i => `- ${i}`).join('\n') : '- none'}
 
 Generate exactly 3 alternative meals that:
 1. Match the same meal type (${meal.meal})
@@ -250,6 +261,15 @@ Respond ONLY with valid JSON, no other text:
     const cleanJson    = responseText.replace(/```json|```/g, '').trim()
     const result       = JSON.parse(cleanJson)
 
+    let alternatives = Array.isArray(result.alternatives) ? result.alternatives : []
+    if (selectedSwapMode === 'pantry_based' && blockedItems.length > 0) {
+      alternatives = alternatives.filter((alt) => {
+        const items = Array.isArray(alt?.items) ? alt.items : []
+        const txt = items.join(' ').toLowerCase()
+        return !blockedItems.some(name => name && txt.includes(name))
+      })
+    }
+
     posthog.capture({
       distinctId,
       event: 'meal_swapped',
@@ -261,7 +281,7 @@ Respond ONLY with valid JSON, no other text:
       },
     })
 
-    res.json({ success: true, alternatives: result.alternatives })
+    res.json({ success: true, alternatives })
 
   } catch (error) {
     console.error('Swap meal error:', error.message)
