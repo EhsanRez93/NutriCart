@@ -36,10 +36,56 @@ app.use(express.json({ limit: '10mb' }))
 function normalizeReceiptItemName(name = '') {
   return String(name || '')
     .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
     .replace(/\([^)]*\)/g, ' ')
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+async function translateReceiptNamesToEnglish(client, rawNames = []) {
+  const uniqueNames = Array.from(new Set(rawNames.map(n => String(n || '').trim()).filter(Boolean)))
+  if (uniqueNames.length === 0) return {}
+
+  const prompt = `Translate each grocery item name to short pantry-friendly English.
+
+Requirements:
+- Keep meaning only, remove brand names and marketing words.
+- Use lowercase singular nouns where possible.
+- If already English, keep it in English and normalize minimally.
+- Return ONE JSON object only:
+{
+  "translations": [
+    { "source": "banány", "english": "banana" }
+  ]
+}
+
+Names to translate:
+${uniqueNames.map(n => `- ${n}`).join('\n')}`
+
+  const completion = await client.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    temperature: 0,
+    max_tokens: 800,
+    messages: [{ role: 'user', content: prompt }],
+    response_format: { type: 'json_object' },
+  })
+
+  const responseText = completion.choices?.[0]?.message?.content || ''
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) return {}
+  const parsed = JSON.parse(jsonMatch[0])
+  const rows = Array.isArray(parsed.translations) ? parsed.translations : []
+
+  const out = {}
+  for (const row of rows) {
+    const source = String(row?.source || '').trim()
+    const english = String(row?.english || '').trim().toLowerCase()
+    if (!source || !english) continue
+    out[source] = english
+  }
+  return out
 }
 
 function toCanonicalReceiptUnit(unit = '') {
@@ -924,10 +970,11 @@ app.post('/api/receipt-ocr', async (req, res) => {
 Task:
 1) Read the receipt image.
 2) Extract only food/ingredient items (ignore totals, taxes, loyalty lines, deposit fees, barcodes).
-3) Normalize each item to generic ingredient names in English lowercase.
-4) Parse quantity + unit when visible. If quantity is not visible, use quantity=1 and unit="pcs".
-5) Infer broad category for each item (e.g. fruits, vegetables, dairy, meat, fish, grains, oils, spices, pantry).
-6) Correct obvious OCR/store shorthand (e.g. Lidl SK/CZ abbreviations).
+3) If receipt text is non-English, translate item names to English.
+4) Normalize each item to generic ingredient names in English lowercase.
+5) Parse quantity + unit when visible. If quantity is not visible, use quantity=1 and unit="pcs".
+6) Infer broad category for each item (e.g. fruits, vegetables, dairy, meat, fish, grains, oils, spices, pantry).
+7) Correct obvious OCR/store shorthand (e.g. Lidl SK/CZ abbreviations).
 
 Return ONLY valid JSON:
 {
@@ -948,6 +995,7 @@ Rules:
 - Keep units to: pcs, g, kg, ml, l, tsp, tbsp, cup, pack
 - quantity must be numeric
 - confidence range 0..1
+- name must be English
 - Return JSON only, no markdown.`
 
     const userPrompt = `Parse this grocery receipt image for pantry import. Store hint: ${storeHint || 'unknown'}`
@@ -974,9 +1022,19 @@ Rules:
     const parsed = JSON.parse(jsonMatch[0])
 
     const rawItems = Array.isArray(parsed.items) ? parsed.items : []
+    const sourceNames = rawItems.map(i => String(i?.name || '').trim()).filter(Boolean)
+    let translationMap = {}
+    try {
+      translationMap = await translateReceiptNamesToEnglish(client, sourceNames)
+    } catch (translateError) {
+      console.warn('Receipt name translation warning:', translateError.message)
+    }
+
     const normalizedMap = {}
     for (const item of rawItems) {
-      const name = normalizeReceiptItemName(item?.name)
+      const sourceName = String(item?.name || '').trim()
+      const translatedName = translationMap[sourceName] || sourceName
+      const name = normalizeReceiptItemName(translatedName)
       if (!name) continue
 
       let unit = toCanonicalReceiptUnit(item?.unit)
@@ -993,6 +1051,7 @@ Rules:
       if (!normalizedMap[key]) {
         normalizedMap[key] = {
           name,
+          sourceName,
           quantity,
           unit,
           category: pantryCategory,
