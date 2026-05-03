@@ -31,14 +31,22 @@ export default function RecipeStepsModal({ meal, userId, onClose }) {
         },
         body: JSON.stringify({ meal }),
       })
+      if (!res.ok) {
+        const statusText = res.status === 502 || res.status === 503
+          ? 'Backend is warming up — please wait a moment and try again'
+          : `Server error (${res.status}) — please try again`
+        setError(statusText)
+        return
+      }
       const data = await res.json()
       if (data.success) {
         setRecipe(data)
       } else {
         setError(data.error || 'Failed to load recipe')
       }
-    } catch {
-      setError('Network error — please try again')
+    } catch (err) {
+      const msg = err?.message || ''
+      setError(msg.includes('fetch') ? 'Network error — check your connection and try again' : 'Could not load recipe steps — please try again')
     }
     setLoading(false)
   }
