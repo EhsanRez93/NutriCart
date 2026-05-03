@@ -910,12 +910,43 @@ Respond ONLY with valid JSON, no other text:
 app.post('/api/replan-with-pantry', async (req, res) => {
   const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
-    const { profile = {}, currentPlan, startDate, pantryItems = [] } = req.body || {}
+    const {
+      profile = {},
+      currentPlan,
+      pantryItems = [],
+      pantryMode = 'mixed',
+      planScope = 'week',
+      todayDate,
+    } = req.body || {}
+
+    const selectedPantryMode = pantryMode === 'pantry_only' ? 'pantry_only' : 'mixed'
+    const selectedPlanScope = planScope === 'today' ? 'today' : 'week'
+    const today = todayDate || new Date().toISOString().split('T')[0]
+
     if (!currentPlan || !Array.isArray(currentPlan.days)) {
       return res.status(400).json({ success: false, error: 'currentPlan.days[] required' })
     }
     if (pantryItems.length === 0) {
       return res.status(400).json({ success: false, error: 'No pantry items to plan with' })
+    }
+
+    let targetDays = []
+    if (selectedPlanScope === 'today') {
+      const exactToday = currentPlan.days.find(d => d.date === today)
+      if (exactToday) {
+        targetDays = [exactToday]
+      } else {
+        const nearestFuture = currentPlan.days.find(d => d.date && d.date >= today)
+        if (!nearestFuture) {
+          return res.status(400).json({ success: false, error: 'No day available to regenerate.' })
+        }
+        targetDays = [nearestFuture]
+      }
+    } else {
+      targetDays = currentPlan.days.filter(d => d.date && d.date >= today)
+      if (targetDays.length === 0) {
+        return res.status(400).json({ success: false, error: 'No remaining days in this plan.' })
+      }
     }
     
     const client = getGroqClient()
@@ -929,7 +960,15 @@ app.post('/api/replan-with-pantry', async (req, res) => {
       })
       .join('\n')
 
-    const daysStr = currentPlan.days.map(d => `  ${d.date} (${d.day || 'day'})`).join('\n')
+    const daysStr = targetDays.map(d => `  ${d.date} (${d.day || 'day'})`).join('\n')
+
+    const pantryModeInstruction = selectedPantryMode === 'pantry_only'
+      ? 'Use ONLY pantry items in meals. Do not add external ingredients unless absolutely impossible for nutrition; if any are needed, add them to shoppingReminders.'
+      : 'Use pantry items first, then add AI-suggested complementary ingredients as needed for nutrition and variety.'
+
+    const planScopeInstruction = selectedPlanScope === 'today'
+      ? 'Regenerate ONLY one day (today/nearest available date). Keep all other plan days unchanged.'
+      : 'Regenerate all listed remaining days. Simulate pantry depletion day by day using quantities. If ingredients run out before period end, include clear shoppingReminders.'
 
     const prompt = `You are a creative behavioral nutritionist AI for NutriCart. The user has specific ingredients at home and wants to plan meals around them to save time and money.
 
@@ -943,15 +982,16 @@ USER PROFILE:
 USER'S PANTRY (create meals PRIORITIZING these items first — they're already paid for and at home!):
 ${pantryList}
 
-DAYS TO PLAN:
+DAYS TO PLAN (${selectedPlanScope === 'today' ? 'single-day update' : 'remaining-week update'}):
 ${daysStr}
 
 IMPORTANT INSTRUCTIONS:
-1. Create meals that USE these pantry items prominently — aim for 60%+ of ingredients to come from the pantry
-2. Fill remaining ingredients with complementary items from store (for freshness, variety, nutrition balance)
+1. ${pantryModeInstruction}
+2. ${planScopeInstruction}
 3. Keep each day hitting their nutrition targets (${profile.calories || 2000} kcal, ${profile.protein || 100}g protein roughly)
 4. Suggest meals in different categories (breakfast, lunch, dinner) to add variety
 5. Consider ingredient combinations that work well together
+6. Always output "items" arrays in each meal.
 
 Respond ONLY with valid JSON, no markdown:
 {
@@ -966,7 +1006,7 @@ Respond ONLY with valid JSON, no markdown:
           "meal": "breakfast|lunch|dinner|snack",
           "time": "HH:MM",
           "name": "Meal name",
-          "ingredients": ["item with qty", ...],
+          "items": ["item with qty", ...],
           "calories": 500,
           "protein": 20,
           "carbs": 60,
@@ -978,7 +1018,15 @@ Respond ONLY with valid JSON, no markdown:
       "reason": "Why these meals make sense given your pantry + nutrition goals"
     }
   ],
-  "pantryUtilization": "Percentage of meals using pantry items"
+  "pantryUtilization": "Percentage of meals using pantry items",
+  "shoppingReminders": [
+    {
+      "item": "name",
+      "neededBy": "YYYY-MM-DD",
+      "estimatedQty": "optional qty + unit",
+      "reason": "why user should buy"
+    }
+  ]
 }`
     
     const completion = await client.chat.completions.create({
@@ -995,10 +1043,12 @@ Respond ONLY with valid JSON, no markdown:
     const parsed = JSON.parse(jsonMatch[0])
 
     // Map days into currentPlan structure
+    const generatedDays = Array.isArray(parsed.futureDays) ? parsed.futureDays : []
+
     const newMealPlan = {
       ...currentPlan,
       days: currentPlan.days.map(origDay => {
-        const newDay = parsed.futureDays.find(d => d.date === origDay.date)
+        const newDay = generatedDays.find(d => d.date === origDay.date)
         if (!newDay) return origDay
         const normalizedMeals = (newDay.meals || []).map(m => {
           const items = Array.isArray(m.items)
@@ -1016,8 +1066,20 @@ Respond ONLY with valid JSON, no markdown:
       }),
     }
 
-    posthog.capture('pantry_replan_generated', { distinctId, pantry_items: pantryItems.length, days: newMealPlan.days.length })
-    res.json({ success: true, mealPlan: newMealPlan, pantryUtilization: parsed.pantryUtilization })
+    posthog.capture('pantry_replan_generated', {
+      distinctId,
+      pantry_items: pantryItems.length,
+      days_regenerated: generatedDays.length,
+      pantry_mode: selectedPantryMode,
+      plan_scope: selectedPlanScope,
+    })
+    res.json({
+      success: true,
+      mealPlan: newMealPlan,
+      pantryUtilization: parsed.pantryUtilization,
+      shoppingReminders: Array.isArray(parsed.shoppingReminders) ? parsed.shoppingReminders : [],
+      regeneratedDates: generatedDays.map(d => d.date).filter(Boolean),
+    })
   } catch (error) {
     console.error('Pantry replan error:', error.message)
     posthog.captureException(error, distinctId, { route: '/api/replan-with-pantry' })

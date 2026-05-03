@@ -332,6 +332,54 @@ function StartDateModal({ onConfirm, onClose }) {
   )
 }
 
+function PantryPlanOptionsModal({ options, onChange, onConfirm, onClose, loading }) {
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-md w-full">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-extrabold text-gray-800">🧺 Pantry Plan Options</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">×</button>
+        </div>
+
+        <div className="mb-5">
+          <p className="text-sm font-bold text-gray-700 mb-2">1) Ingredient source</p>
+          <div className="space-y-2">
+            {[{ value: 'pantry_only', label: 'Only pantry items', desc: 'Use only ingredients currently in your pantry.' },
+              { value: 'mixed', label: 'Mixed (pantry + AI suggested)', desc: 'Prioritize pantry items and add smart extras when needed.' }].map(opt => (
+              <button key={opt.value}
+                onClick={() => onChange({ ...options, pantryMode: opt.value })}
+                className={`w-full text-left px-4 py-3 rounded-xl border-2 transition ${options.pantryMode === opt.value ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'}`}>
+                <p className="text-sm font-bold text-gray-800">{opt.label}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-6">
+          <p className="text-sm font-bold text-gray-700 mb-2">2) Plan scope</p>
+          <div className="space-y-2">
+            {[{ value: 'today', label: 'Today only', desc: 'Only update today. Keep all other days unchanged.' },
+              { value: 'week', label: 'Whole remaining week', desc: 'Update all remaining days and track pantry depletion with buy reminders.' }].map(opt => (
+              <button key={opt.value}
+                onClick={() => onChange({ ...options, planScope: opt.value })}
+                className={`w-full text-left px-4 py-3 rounded-xl border-2 transition ${options.planScope === opt.value ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-green-300'}`}>
+                <p className="text-sm font-bold text-gray-800">{opt.label}</p>
+                <p className="text-xs text-gray-500 mt-0.5">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <button onClick={onConfirm} disabled={loading}
+          className="bg-green-600 text-white px-8 py-3 rounded-full font-bold w-full hover:bg-green-700 transition disabled:opacity-60">
+          {loading ? '⏳ Generating…' : 'Generate Plan'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function InsightCard({ insight }) {
   const cat = (insight.category || 'habit').toLowerCase()
   const palette = {
@@ -456,6 +504,9 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   // ── v17.0 Priority 1: "Use what I have" smart replanning ──
   const [pantryReplanLoading, setPantryReplanLoading] = useState(false)
   const [pantryReplanError, setPantryReplanError] = useState(null)
+  const [showPantryPlanOptions, setShowPantryPlanOptions] = useState(false)
+  const [pantryPlanOptions, setPantryPlanOptions] = useState({ pantryMode: 'mixed', planScope: 'week' })
+  const [pantryShoppingReminders, setPantryShoppingReminders] = useState([])
 
   // ── v17.0 Priority 2: Meal prep multiplier ──
   const [scaledMealId, setScaledMealId] = useState(null) // "mealName@HH:MM" format to identify meal
@@ -838,10 +889,11 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   }
 
   // ── v17.0: Regenerate plan to prioritize pantry items ──
-  async function replanUsingPantry() {
+  async function replanUsingPantry(opts = pantryPlanOptions) {
     if (!aiMealPlan || !startDate || pantryItems.length === 0) return
     setPantryReplanLoading(true)
     setPantryReplanError(null)
+    setPantryShoppingReminders([])
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/replan-with-pantry', {
         method: 'POST',
@@ -852,15 +904,24 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         body: JSON.stringify({
           profile: { ...profile, pantry: pantryItems },
           currentPlan: aiMealPlan,
-          startDate: startDate,
           pantryItems: pantryItems,
+          pantryMode: opts.pantryMode,
+          planScope: opts.planScope,
+          todayDate: getTodayStr(),
         }),
       })
       const data = await response.json()
       if (data.success) {
         setAiMealPlan(data.mealPlan)
         await onSaveMealPlan(data.mealPlan, startDate)
-        posthog.capture('pantry_replan_generated', { pantry_items: pantryItems.length, days: data.mealPlan.days.length })
+        setPantryShoppingReminders(Array.isArray(data.shoppingReminders) ? data.shoppingReminders : [])
+        setShowPantryPlanOptions(false)
+        posthog.capture('pantry_replan_generated', {
+          pantry_items: pantryItems.length,
+          days: data.mealPlan.days.length,
+          pantry_mode: opts.pantryMode,
+          plan_scope: opts.planScope,
+        })
       } else {
         setPantryReplanError(data.error || 'Could not regenerate plan right now.')
       }
@@ -1899,17 +1960,27 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 {pantryReplanError && (
                   <p className="text-red-600 text-sm mb-3">❌ {pantryReplanError}</p>
                 )}
+                {pantryShoppingReminders.length > 0 && (
+                  <div className="mb-3 bg-amber-50 border border-amber-200 rounded-xl p-3">
+                    <p className="text-xs font-bold text-amber-800 mb-2">🛒 Pantry may run out — buy reminders</p>
+                    <ul className="space-y-1">
+                      {pantryShoppingReminders.slice(0, 5).map((r, i) => (
+                        <li key={i} className="text-xs text-amber-700">• {r.item || 'Item'} {r.neededBy ? `(by ${r.neededBy})` : ''} {r.reason ? `— ${r.reason}` : ''}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 <button
-                  onClick={replanUsingPantry}
+                  onClick={() => setShowPantryPlanOptions(true)}
                   disabled={pantryReplanLoading}
                   className="w-full bg-green-600 text-white px-6 py-3 rounded-full font-bold text-sm hover:bg-green-700 transition disabled:opacity-50 flex items-center justify-center gap-2">
                   {pantryReplanLoading ? (
                     <>⏳ Regenerating plan…</>
                   ) : (
-                    <>🔄 Regenerate plan to use these items</>
+                    <>🔄 Generate pantry-based plan</>
                   )}
                 </button>
-                <p className="text-xs text-green-700 mt-2 text-center">The AI will create meals using what you already have, saving time & money!</p>
+                <p className="text-xs text-green-700 mt-2 text-center">Choose pantry-only or mixed, and choose today-only or whole-week before generating.</p>
               </div>
             )}
 
@@ -2025,6 +2096,15 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       {showStartDate  && <StartDateModal onConfirm={generateAIPlan} onClose={() => setShowStartDate(false)} />}
       {showEditGoals  && <EditGoalsModal profile={profile} onSave={(g) => { onUpdateGoals(g); setShowEditGoals(false) }} onClose={() => setShowEditGoals(false)} />}
       {showMicroModal && <MicronutrientModal existing={medicalData} onSave={setMedicalData} onClose={() => setShowMicroModal(false)} />}
+      {showPantryPlanOptions && (
+        <PantryPlanOptionsModal
+          options={pantryPlanOptions}
+          onChange={setPantryPlanOptions}
+          onConfirm={() => replanUsingPantry(pantryPlanOptions)}
+          onClose={() => setShowPantryPlanOptions(false)}
+          loading={pantryReplanLoading}
+        />
+      )}
 
       {/* v16.0 Recipe Steps modal */}
       {recipeModal && (
