@@ -60,6 +60,21 @@ app.post('/api/mealplan', async (req, res) => {
 Holiday handling mode: ${holidayMode} (festive = suggest festive/traditional meals; normal = treat as any day; skip = mark day as rest/skip with skipDay:true)`
       : ''
 
+    // v15.0 — pantry-aware planning
+    const pantryItems = Array.isArray(profile.pantry) ? profile.pantry : []
+    const today = new Date().toISOString().split('T')[0]
+    const expiringSoon = pantryItems
+      .filter(p => p.expiry_date && p.expiry_date >= today)
+      .filter(p => {
+        const days = (new Date(p.expiry_date) - new Date(today)) / 86400000
+        return days <= 3
+      })
+    const pantryLines = pantryItems.length > 0
+      ? `\nUSER'S PANTRY (prioritize meals that use these — they have it at home already):
+${pantryItems.map(p => `  - ${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}${p.expiry_date ? ` [expires ${p.expiry_date}]` : ''}`).join('\n')}
+${expiringSoon.length > 0 ? `\n⚠️ EXPIRING WITHIN 3 DAYS — use these in early meals: ${expiringSoon.map(p => p.name).join(', ')}` : ''}`
+      : ''
+
     const prompt = `You are a professional nutritionist AI for NutriCart app.
 Generate a personalized 7-day meal plan for this user:
 Name: ${profile.name}
@@ -73,7 +88,7 @@ Preferred stores: ${Array.isArray(profile.store) ? profile.store.join(', ') : pr
 Daily calorie target: ${profile.calories} kcal
 Daily protein target: ${profile.protein}g
 Daily carbs target: ${profile.carbs}g
-Daily fats target: ${profile.fats}g${holidayLines}
+Daily fats target: ${profile.fats}g${holidayLines}${pantryLines}
 
 Respond ONLY with a valid JSON object in this exact format, no other text, no markdown:
 {
@@ -90,7 +105,8 @@ Respond ONLY with a valid JSON object in this exact format, no other text, no ma
           "carbs": 70,
           "fats": 20,
           "items": ["ingredient 1 with amount", "ingredient 2 with amount"],
-          "store": "Lidl"
+          "store": "Lidl",
+          "usesPantry": ["banana", "oats"]
         }
       ],
       "totalCalories": 2500,
@@ -105,6 +121,8 @@ Rules:
 - Address these symptoms with specific foods: ${Array.isArray(profile.symptoms) ? profile.symptoms.join(', ') : 'none'}
 - Keep meals realistic and easy to prepare
 - Vary meals across the 7 days
+${pantryItems.length > 0 ? `- PRIORITIZE pantry items in your recipes; populate "usesPantry": [...] with the matching pantry item names you actually used in this meal (lowercase, no quantities). Empty array [] if none used.` : '- "usesPantry" should be an empty array [] in every meal.'}
+${expiringSoon.length > 0 ? `- Items expiring within 3 days MUST appear in the first 2 days of the plan` : ''}
 - Respond with ONLY the JSON, no other text, no backticks`
 
     const completion = await client.chat.completions.create({
@@ -197,6 +215,187 @@ Respond ONLY with valid JSON, no other text:
 
   } catch (error) {
     console.error('Swap meal error:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── v14.0 Re-tune Plan Route ─────────────────────────
+// Takes current 7-day plan + actual logs + profile, redistributes any
+// over/under intake across the REMAINING days, asks Groq to regenerate
+// only the future days (past days are kept exactly as-is).
+app.post('/api/replan', async (req, res) => {
+  try {
+    const { profile = {}, currentPlan, mealLogs = [], todayDate } = req.body || {}
+    if (!currentPlan || !Array.isArray(currentPlan.days)) {
+      return res.status(400).json({ success: false, error: 'currentPlan.days[] required' })
+    }
+    const client = getGroqClient()
+
+    const today = todayDate || new Date().toISOString().split('T')[0]
+
+    // Build per-day rollup from logs (keyed by date)
+    const logsByDate = {}
+    for (const log of mealLogs) {
+      const d = log.log_date
+      if (!logsByDate[d]) logsByDate[d] = { eaten: [], skipped: [], totalCalories: 0, totalProtein: 0, totalCarbs: 0, totalFats: 0 }
+      if (log.skipped) {
+        logsByDate[d].skipped.push(log)
+      } else {
+        logsByDate[d].eaten.push(log)
+        logsByDate[d].totalCalories += +log.calories || 0
+        logsByDate[d].totalProtein  += +log.protein  || 0
+        logsByDate[d].totalCarbs    += +log.carbs    || 0
+        logsByDate[d].totalFats     += +log.fats     || 0
+      }
+    }
+
+    // Classify each plan day as past (locked) or future (regeneratable)
+    const pastDays   = []
+    const futureDays = []
+    let netCalDeviation     = 0
+    let netProteinDeviation = 0
+    const goalCal = +profile.calories || 0
+    const goalPro = +profile.protein  || 0
+
+    for (const day of currentPlan.days) {
+      const isPast = day.date && day.date < today
+      if (isPast) {
+        const log = logsByDate[day.date] || { totalCalories: 0, totalProtein: 0 }
+        // If user has logs for that day, deviation = actual eaten - goal
+        // If no logs at all (silent day), assume they ate the planned amount
+        const actualCal = log.eaten.length > 0 ? log.totalCalories : (day.totalCalories || day.meals?.reduce((s,m)=>s+(+m.calories||0),0) || goalCal)
+        const actualPro = log.eaten.length > 0 ? log.totalProtein  : (day.totalProtein  || day.meals?.reduce((s,m)=>s+(+m.protein ||0),0) || goalPro)
+        netCalDeviation     += actualCal - goalCal
+        netProteinDeviation += actualPro - goalPro
+        pastDays.push({ ...day, _actualCalories: actualCal, _actualProtein: actualPro, _hasLogs: log.eaten.length > 0 || log.skipped.length > 0 })
+      } else {
+        futureDays.push(day)
+      }
+    }
+
+    if (futureDays.length === 0) {
+      return res.json({ success: false, error: 'No future days remain in this plan to re-tune.' })
+    }
+
+    // Spread the deviation across remaining days, capped at ±25% of daily goal
+    const calAdjustPerDay = goalCal ? Math.max(-goalCal * 0.25, Math.min(goalCal * 0.25, -netCalDeviation / futureDays.length)) : 0
+    const proAdjustPerDay = goalPro ? Math.max(-goalPro * 0.25, Math.min(goalPro * 0.25, -netProteinDeviation / futureDays.length)) : 0
+    const adjustedDailyCal = Math.round(goalCal + calAdjustPerDay)
+    const adjustedDailyPro = Math.round(goalPro + proAdjustPerDay)
+    const adjustedDailyCarbs = Math.round(((adjustedDailyCal * 0.45) / 4))   // ~45% from carbs
+    const adjustedDailyFats  = Math.round(((adjustedDailyCal * 0.25) / 9))   // ~25% from fats
+
+    // Summarize past days for the prompt (compact)
+    const pastSummary = pastDays.map(d => `  ${d.date} (${d.day || 'past'}): planned ${d.totalCalories || 0}kcal, actual ${d._actualCalories}kcal${d._hasLogs ? '' : ' (assumed eaten as planned)'}${d.holidayName ? ' 🎉' : ''}`).join('\n') || '  (none)'
+
+    // v15.0 — pantry awareness for re-tune
+    const pantryItems = Array.isArray(profile.pantry) ? profile.pantry : []
+    const pantryLines = pantryItems.length > 0
+      ? `\nUSER'S PANTRY (prefer using these — they're already at home):\n${pantryItems.map(p => `  - ${p.name}${p.expiry_date ? ` [exp ${p.expiry_date}]` : ''}`).join('\n')}`
+      : ''
+
+    const futureSummary = futureDays.map(d => `  ${d.date} (${d.day || 'future'})${d.holidayName ? ' 🎉 ' + d.holidayName : ''}`).join('\n')
+
+    const prompt = `You are a behavioral nutritionist AI for NutriCart. The user's plan needs to be RE-TUNED based on what they've actually eaten so far.
+
+USER:
+- Goal: ${profile.goal}
+- Current weight ${profile.currentWeight}kg → target ${profile.targetWeight}kg
+- Original daily targets: ${goalCal} kcal · ${goalPro}g protein
+- Symptoms to consider: ${(Array.isArray(profile.symptoms) ? profile.symptoms : []).join(', ') || 'none'}
+- Preferred store: ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
+
+PAST DAYS (DO NOT REGENERATE — keep them as-is, the user has already eaten):
+${pastSummary}
+
+NET DEVIATION over past days: ${Math.round(netCalDeviation) >= 0 ? '+' : ''}${Math.round(netCalDeviation)} kcal, ${Math.round(netProteinDeviation) >= 0 ? '+' : ''}${Math.round(netProteinDeviation)}g protein
+
+ADJUSTED TARGETS for the remaining ${futureDays.length} day(s):
+- ${adjustedDailyCal} kcal/day (vs original ${goalCal})
+- ${adjustedDailyPro}g protein/day
+- ~${adjustedDailyCarbs}g carbs/day, ~${adjustedDailyFats}g fats/day
+
+REMAINING DAYS to regenerate:
+${futureSummary}${pantryLines}
+
+Respond ONLY with valid JSON, no markdown. Generate ONLY the future days listed above. Keep each day's "date" and "holidayName" fields as listed:
+{
+  "futureDays": [
+    {
+      "day": "Tuesday",
+      "date": "2026-05-04",
+      "holidayName": null,
+      "skipDay": false,
+      "adjusted": true,
+      "reason": "Compensating for +400 kcal weekend deviation",
+      "meals": [
+        { "meal": "Breakfast", "time": "7:30 AM", "name": "...", "calories": 450, "protein": 28, "carbs": 50, "fats": 15, "items": ["..."], "store": "Lidl", "usesPantry": [] }
+      ],
+      "totalCalories": 1800,
+      "totalProtein": 130
+    }
+  ]
+}
+
+Rules:
+- 4 meals per day (Breakfast, Lunch, Snack, Dinner)
+- Each day's meals should sum close to the adjusted targets above
+- "adjusted": true on each regenerated day
+- "reason": one short sentence explaining what's being compensated for
+- Address symptoms with specific foods
+- Keep meals realistic and easy to prepare
+- Use products available at the user's preferred store
+${pantryItems.length > 0 ? '- Prefer pantry items; populate "usesPantry" array with matching pantry item names actually used' : '- "usesPantry": [] for every meal'}
+- Respond with ONLY JSON, no backticks`
+
+    const completion = await client.chat.completions.create({
+      model: 'llama-3.3-70b-versatile',
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: 4000,
+      temperature: 0.6,
+    })
+
+    const responseText = completion.choices[0].message.content
+    const cleanJson    = responseText.replace(/```json|```/g, '').trim()
+    const parsed       = JSON.parse(cleanJson)
+
+    if (!Array.isArray(parsed.futureDays)) {
+      throw new Error('AI did not return futureDays[]')
+    }
+
+    // Merge: past days unchanged + future days replaced (matched by date)
+    const futureByDate = {}
+    for (const f of parsed.futureDays) futureByDate[f.date] = f
+
+    const mergedDays = currentPlan.days.map(day => {
+      if (day.date && day.date < today) return day // past — untouched
+      const replacement = futureByDate[day.date]
+      if (!replacement) return day // AI omitted this future day — keep original
+      return {
+        ...day,
+        ...replacement,
+        date:        day.date,                                  // preserve
+        holidayName: day.holidayName ?? replacement.holidayName, // preserve holiday
+        skipDay:     day.skipDay ?? replacement.skipDay,
+        adjusted:    true,
+      }
+    })
+
+    res.json({
+      success: true,
+      mealPlan: { ...currentPlan, days: mergedDays },
+      adjustments: {
+        netCalDeviation:     Math.round(netCalDeviation),
+        netProteinDeviation: Math.round(netProteinDeviation),
+        adjustedDailyCal,
+        adjustedDailyPro,
+        futureDayCount:      futureDays.length,
+        pastDayCount:        pastDays.length,
+      },
+    })
+
+  } catch (error) {
+    console.error('Replan error:', error.message)
     res.status(500).json({ success: false, error: error.message })
   }
 })

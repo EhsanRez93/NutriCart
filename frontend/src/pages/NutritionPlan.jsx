@@ -435,6 +435,16 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [todayCheckin, setTodayCheckin]         = useState(null) // today's check-in row, if any
   const [checkinSaving, setCheckinSaving]       = useState(false)
 
+  // ── v14.0 Re-tune state ──
+  const [replanLoading, setReplanLoading] = useState(false)
+  const [replanError, setReplanError]     = useState(null)
+  const [replanResult, setReplanResult]   = useState(null) // { adjustments } shown in confirmation banner
+
+  // ── v15.0 Pantry state ──
+  const [pantryItems, setPantryItems] = useState([])
+  const [pantryLoading, setPantryLoading] = useState(false)
+  const [pantryDraft, setPantryDraft] = useState({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' })
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -524,6 +534,20 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setTodayCheckin(todayRow || null)
     }
     loadAll().catch(err => console.warn('insights data load failed:', err.message))
+  }, [userId])
+
+  // ── v15.0: Load pantry items ──
+  useEffect(() => {
+    if (!userId) return
+    async function loadPantry() {
+      const { data, error } = await supabase
+        .from('pantry_items')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+      if (data && !error) setPantryItems(data)
+    }
+    loadPantry()
   }, [userId])
 
   // ── Auto set active day ──
@@ -645,6 +669,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
           startDate:    planStart,
           holidays:     planHolidays,
           holidayMode:  profile.holidayMode || 'festive',
+          pantry:       pantryItems,
         })
       })
       const data = await response.json()
@@ -706,6 +731,98 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     }
     setCheckinSaving(false)
   }
+
+  // ── v15.0: Pantry CRUD ──
+  async function addPantryItem(draft) {
+    if (!userId || !draft.name?.trim()) return
+    setPantryLoading(true)
+    const payload = {
+      user_id:     userId,
+      name:        draft.name.trim().toLowerCase(),
+      quantity:    draft.quantity ? parseFloat(draft.quantity) : null,
+      unit:        draft.unit || null,
+      category:    draft.category || 'pantry',
+      expiry_date: draft.expiry_date || null,
+    }
+    const { data, error } = await supabase.from('pantry_items').insert(payload).select().single()
+    if (data && !error) setPantryItems(prev => [data, ...prev])
+    setPantryLoading(false)
+  }
+
+  async function deletePantryItem(id) {
+    setPantryItems(prev => prev.filter(p => p.id !== id))
+    if (!userId) return
+    await supabase.from('pantry_items').delete().eq('id', id).eq('user_id', userId)
+  }
+
+  async function updatePantryItem(id, patch) {
+    setPantryItems(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
+    if (!userId) return
+    await supabase.from('pantry_items').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id).eq('user_id', userId)
+  }
+
+  // Helper: find pantry items expiring within N days
+  function expiringPantry(daysAhead = 3) {
+    const today = getTodayStr()
+    return pantryItems.filter(p => {
+      if (!p.expiry_date) return false
+      const days = (new Date(p.expiry_date) - new Date(today)) / 86400000
+      return days >= 0 && days <= daysAhead
+    })
+  }
+
+  // ── v14.0: Re-tune remaining days based on actual logs ──
+  async function replanRemainingDays() {
+    if (!aiMealPlan || !startDate) return
+    setReplanLoading(true)
+    setReplanError(null)
+    setReplanResult(null)
+    try {
+      const planStart = startDate
+      const planEnd   = addDays(startDate, 6)
+      // Use the meals already loaded for this plan window
+      const windowLogs = allMealLogs.filter(m => m.log_date >= planStart && m.log_date <= planEnd)
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/replan', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          profile:     { ...profile, pantry: pantryItems },
+          currentPlan: aiMealPlan,
+          mealLogs:    windowLogs,
+          todayDate:   getTodayStr(),
+        }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAiMealPlan(data.mealPlan)
+        await onSaveMealPlan(data.mealPlan, startDate)
+        setReplanResult(data.adjustments)
+      } else {
+        setReplanError(data.error || 'Could not re-tune plan right now.')
+      }
+    } catch (err) {
+      setReplanError('Backend not reachable.')
+    } finally {
+      setReplanLoading(false)
+    }
+  }
+
+  // ── Compute current adherence to flag the user when re-tuning is recommended ──
+  function computeCurrentAdherence() {
+    if (!aiMealPlan || !startDate) return null
+    const today = getTodayStr()
+    let goalCalSum = 0, actualCalSum = 0, pastDayCount = 0
+    for (const day of aiMealPlan.days) {
+      if (!day.date || day.date >= today) continue
+      pastDayCount++
+      goalCalSum += day.totalCalories || day.meals?.reduce((s, m) => s + (+m.calories || 0), 0) || 0
+      const dayLogs = allMealLogs.filter(m => m.log_date === day.date && !m.skipped)
+      actualCalSum += dayLogs.reduce((s, m) => s + (+m.calories || 0), 0) || (goalCalSum / Math.max(pastDayCount, 1)) // assume planned if no logs
+    }
+    if (pastDayCount < 2 || goalCalSum === 0) return null
+    const adherencePct = Math.round((actualCalSum / goalCalSum) * 100)
+    return { adherencePct, pastDayCount, deviation: actualCalSum - goalCalSum }
+  }
+  const currentAdherence = computeCurrentAdherence()
 
   // ── v13.0: Generate insights ──
   async function refreshInsights() {
@@ -806,6 +923,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             { id: 'meals',     label: '🍽️ Meal Plan' },
             { id: 'week',      label: '📅 Weekly View' },
             { id: 'insights',  label: '💡 Insights' },
+            { id: 'pantry',    label: '🧺 Pantry' },
             { id: 'flags',     label: `⚠️ Health Flags${activeSymptoms.length > 0 ? ` (${activeSymptoms.length})` : ''}` },
             { id: 'shopping',  label: '🛒 Shopping List' },
             { id: 'score',     label: '🏆 Score Card' },
@@ -1025,23 +1143,41 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       const isToday   = date === todayStr
                       const holiday   = findHoliday(calendarHolidays, date)
                       const isSkip    = holiday && (profile.holidayMode || 'festive') === 'skip'
+                      const isAdjusted = aiMealPlan?.days?.[i]?.adjusted
                       return (
-                        <Tooltip key={i} content={holiday ? <span>{holiday.localName || holiday.name}</span> : null}>
+                        <Tooltip key={i} content={
+                          <span>
+                            {holiday && <>🎉 {holiday.localName || holiday.name}<br/></>}
+                            {isAdjusted && <>⚖️ Re-tuned by AI<br/></>}
+                            {!holiday && !isAdjusted && new Date(date).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' })}
+                          </span>
+                        }>
                           <button onClick={() => setActiveDay(i)}
                             className={`relative px-2 py-1 rounded-full text-xs font-bold transition
                               ${activeDay === i ? 'bg-green-600 text-white' : isToday ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-green-50'}
-                              ${holiday ? 'ring-2 ring-amber-400' : ''}`}>
+                              ${holiday ? 'ring-2 ring-amber-400' : ''}
+                              ${isAdjusted && !holiday ? 'ring-2 ring-purple-400' : ''}`}>
                             {new Date(date).toLocaleDateString('en-GB', { weekday: 'short' })}{isToday && ' •'}
                             {holiday && (
                               <span className="absolute -top-1.5 -right-1.5 text-xs leading-none">
                                 {isSkip ? '⊘' : '🎉'}
                               </span>
                             )}
+                            {isAdjusted && !holiday && (
+                              <span className="absolute -top-1.5 -right-1.5 text-[10px] leading-none">⚖️</span>
+                            )}
                           </button>
                         </Tooltip>
                       )
                     })}
                   </div>
+                )}
+                {/* v14.0 — Manual re-tune button (always visible when a plan exists with at least one past day) */}
+                {aiMealPlan && currentAdherence && (
+                  <button onClick={replanRemainingDays} disabled={replanLoading}
+                    className="text-xs font-bold px-4 py-2 rounded-full transition border-2 border-purple-300 text-purple-700 bg-white hover:bg-purple-50 disabled:opacity-60">
+                    {replanLoading ? '⏳ Re-tuning…' : '🔁 Re-tune remaining'}
+                  </button>
                 )}
                 <div className="bg-green-50 text-green-700 text-sm font-semibold px-4 py-2 rounded-full">
                   {totalCalories} kcal {Object.keys(skippedToday).length > 0 ? '(adjusted)' : ''}
@@ -1053,6 +1189,62 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
               <div className="bg-green-50 border border-green-200 rounded-2xl px-5 py-3 mb-4 flex items-center justify-between">
                 <p className="text-green-700 text-sm font-semibold">🍴 Eaten today: {actualIntake.calories} kcal · {actualIntake.protein}g protein</p>
                 <p className="text-green-600 text-xs">{Math.round((actualIntake.calories / nutrition.calories) * 100)}% of daily target</p>
+              </div>
+            )}
+
+            {/* v14.0 — Re-tune confirmation (after success) */}
+            {replanResult && !replanLoading && (
+              <div className="bg-purple-50 border-2 border-purple-300 rounded-2xl px-5 py-3 mb-4 flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <p className="text-purple-800 font-bold text-sm">✅ Plan re-tuned!</p>
+                  <p className="text-purple-700 text-xs mt-1">
+                    Compensating for {replanResult.netCalDeviation >= 0 ? '+' : ''}{replanResult.netCalDeviation} kcal over your last {replanResult.pastDayCount} day(s).
+                    Remaining {replanResult.futureDayCount} day(s) now target {replanResult.adjustedDailyCal} kcal &middot; {replanResult.adjustedDailyPro}g protein.
+                  </p>
+                </div>
+                <button onClick={() => setReplanResult(null)} className="text-purple-600 hover:text-purple-800 font-bold text-lg leading-none flex-shrink-0">×</button>
+              </div>
+            )}
+
+            {/* v14.0 — Re-tune error */}
+            {replanError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 mb-4 text-sm">⚠️ {replanError}</div>
+            )}
+
+            {/* v14.0 — Auto-suggest banner when adherence drifts >25% off-target */}
+            {aiMealPlan && currentAdherence && Math.abs(currentAdherence.adherencePct - 100) > 25 && !replanResult && (
+              <div className="bg-gradient-to-r from-purple-50 to-indigo-50 border-2 border-purple-200 rounded-2xl px-5 py-4 mb-4 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-start gap-3 flex-1 min-w-0">
+                  <span className="text-2xl flex-shrink-0">🔁</span>
+                  <div>
+                    <p className="text-purple-800 font-bold text-sm">
+                      You're at {currentAdherence.adherencePct}% of your goal over the last {currentAdherence.pastDayCount} day{currentAdherence.pastDayCount === 1 ? '' : 's'}
+                    </p>
+                    <p className="text-purple-700 text-xs mt-0.5">
+                      {currentAdherence.deviation > 0
+                        ? `${Math.abs(currentAdherence.deviation)} kcal over plan — let AI re-tune the rest of the week to compensate.`
+                        : `${Math.abs(currentAdherence.deviation)} kcal under plan — let AI rebalance the rest of the week to keep you on track.`}
+                    </p>
+                  </div>
+                </div>
+                <button onClick={replanRemainingDays} disabled={replanLoading}
+                  className="px-5 py-2 rounded-full font-bold text-white text-sm transition shadow disabled:opacity-60 flex-shrink-0"
+                  style={{ background: replanLoading ? '#9ca3af' : 'linear-gradient(to right, #7c3aed, #4f46e5)' }}>
+                  {replanLoading ? '⏳ Re-tuning…' : '🔁 Re-tune now'}
+                </button>
+              </div>
+            )}
+
+            {/* v14.0 — "Day adjusted by AI" banner */}
+            {aiMealPlan?.days?.[activeDay]?.adjusted && (
+              <div className="bg-purple-50 border-2 border-purple-300 rounded-2xl px-5 py-3 mb-4 flex items-center gap-3">
+                <span className="text-2xl">⚖️</span>
+                <div>
+                  <p className="text-purple-800 font-bold text-sm">This day was re-tuned by AI</p>
+                  <p className="text-purple-600 text-xs">
+                    {aiMealPlan.days[activeDay].reason || 'Adjusted to keep your weekly totals on track based on what you actually ate.'}
+                  </p>
+                </div>
               </div>
             )}
 
@@ -1109,6 +1301,12 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         <div className="flex flex-wrap gap-2 mb-3">
                           {meal.items && meal.items.map((item, j) => <span key={j} className="bg-gray-100 text-gray-600 text-xs px-2 py-1 rounded-full">{item}</span>)}
                         </div>
+                        {Array.isArray(meal.usesPantry) && meal.usesPantry.length > 0 && (
+                          <div className="mb-3 inline-flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-full px-3 py-1">
+                            <span className="text-xs font-bold text-purple-700">🧺 Uses your pantry:</span>
+                            <span className="text-xs text-purple-700 capitalize">{meal.usesPantry.join(', ')}</span>
+                          </div>
+                        )}
                       </>
                     )}
                     <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1383,6 +1581,132 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 </p>
               </div>
             )}
+          </div>
+        )}
+
+        {/* ══ PANTRY ══ (v15.0) */}
+        {activeTab === 'pantry' && (
+          <div>
+            <div className="mb-6 flex items-start justify-between flex-wrap gap-4">
+              <div>
+                <h2 className="text-3xl font-extrabold text-gray-800">🧺 Your Pantry</h2>
+                <p className="text-gray-500 mt-1">Tell NutriCart what you have at home — your next meal plan will prioritize using these ingredients.</p>
+              </div>
+              <div className="text-right">
+                <p className="text-sm text-gray-500">Items in pantry</p>
+                <p className="text-3xl font-extrabold text-purple-700">{pantryItems.length}</p>
+              </div>
+            </div>
+
+            {/* Expiring soon banner */}
+            {expiringPantry(3).length > 0 && (
+              <div className="bg-red-50 border-2 border-red-200 rounded-2xl px-5 py-4 mb-6">
+                <div className="flex items-start gap-3 flex-wrap">
+                  <span className="text-2xl flex-shrink-0">⚠️</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-red-800 font-bold text-sm">Items expiring within 3 days — use them first!</p>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {expiringPantry(3).map(p => (
+                        <span key={p.id} className="text-xs bg-white text-red-700 border border-red-200 px-2 py-1 rounded-full font-semibold">
+                          {p.name} {p.expiry_date && <span className="text-red-500">({Math.max(0, Math.round((new Date(p.expiry_date) - new Date(getTodayStr())) / 86400000))}d)</span>}
+                        </span>
+                      ))}
+                    </div>
+                    <p className="text-xs text-red-600 mt-2">Generate (or re-tune) your meal plan and these will be used in the first 2 days.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Add item form */}
+            <div className="bg-white rounded-2xl p-5 shadow-sm mb-6">
+              <h3 className="font-bold text-gray-800 mb-3">➕ Add to pantry</h3>
+              <div className="grid grid-cols-12 gap-2">
+                <input type="text" placeholder="Item name (e.g. spinach)"
+                  value={pantryDraft.name}
+                  onChange={e => setPantryDraft({ ...pantryDraft, name: e.target.value })}
+                  onKeyDown={e => { if (e.key === 'Enter') { addPantryItem(pantryDraft); setPantryDraft({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' }) } }}
+                  className="col-span-12 sm:col-span-4 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:border-purple-500 focus:outline-none" />
+                <input type="number" placeholder="Qty" min="0" step="0.1"
+                  value={pantryDraft.quantity}
+                  onChange={e => setPantryDraft({ ...pantryDraft, quantity: e.target.value })}
+                  className="col-span-4 sm:col-span-2 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:border-purple-500 focus:outline-none" />
+                <select value={pantryDraft.unit}
+                  onChange={e => setPantryDraft({ ...pantryDraft, unit: e.target.value })}
+                  className="col-span-4 sm:col-span-2 border-2 border-gray-200 rounded-xl px-2 py-2 text-sm focus:border-purple-500 focus:outline-none bg-white">
+                  {['pcs', 'g', 'kg', 'ml', 'l', 'tsp', 'tbsp', 'cup', 'pack'].map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
+                <select value={pantryDraft.category}
+                  onChange={e => setPantryDraft({ ...pantryDraft, category: e.target.value })}
+                  className="col-span-4 sm:col-span-2 border-2 border-gray-200 rounded-xl px-2 py-2 text-sm focus:border-purple-500 focus:outline-none bg-white">
+                  <option value="pantry">Pantry</option>
+                  <option value="fridge">Fridge</option>
+                  <option value="freezer">Freezer</option>
+                  <option value="spices">Spices</option>
+                </select>
+                <input type="date" placeholder="Expiry (optional)"
+                  value={pantryDraft.expiry_date}
+                  min={getTodayStr()}
+                  onChange={e => setPantryDraft({ ...pantryDraft, expiry_date: e.target.value })}
+                  className="col-span-12 sm:col-span-2 border-2 border-gray-200 rounded-xl px-3 py-2 text-sm focus:border-purple-500 focus:outline-none" />
+              </div>
+              <button onClick={() => { addPantryItem(pantryDraft); setPantryDraft({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' }) }}
+                disabled={pantryLoading || !pantryDraft.name?.trim()}
+                className="mt-3 w-full sm:w-auto bg-purple-600 text-white px-6 py-2 rounded-full font-bold text-sm hover:bg-purple-700 transition disabled:opacity-50">
+                {pantryLoading ? '⏳ Adding…' : '➕ Add item'}
+              </button>
+            </div>
+
+            {/* Items grouped by category */}
+            {pantryItems.length === 0 ? (
+              <div className="bg-purple-50 rounded-2xl p-10 text-center border border-purple-100">
+                <p className="text-5xl mb-3">🧺</p>
+                <p className="font-bold text-purple-800 text-lg mb-1">Your pantry is empty</p>
+                <p className="text-purple-700 text-sm">Add a few items above so the AI can plan around what you already have.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {['fridge', 'freezer', 'pantry', 'spices'].map(cat => {
+                  const items = pantryItems.filter(p => (p.category || 'pantry') === cat)
+                  if (items.length === 0) return null
+                  const icons = { fridge: '🥬', freezer: '🧊', pantry: '🥫', spices: '🧂' }
+                  return (
+                    <div key={cat} className="bg-white rounded-2xl p-5 shadow-sm">
+                      <h3 className="font-bold text-gray-700 mb-3 capitalize flex items-center gap-2">
+                        <span>{icons[cat]}</span>{cat} <span className="text-xs text-gray-400 font-normal">({items.length})</span>
+                      </h3>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {items.map(p => {
+                          const daysToExpiry = p.expiry_date ? Math.round((new Date(p.expiry_date) - new Date(getTodayStr())) / 86400000) : null
+                          const expiringSoon = daysToExpiry !== null && daysToExpiry <= 3 && daysToExpiry >= 0
+                          return (
+                            <div key={p.id} className={`flex items-center justify-between border rounded-xl px-3 py-2 ${expiringSoon ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-gray-50'}`}>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-semibold text-gray-800 text-sm capitalize truncate">{p.name}</p>
+                                <p className="text-xs text-gray-500">
+                                  {p.quantity ? `${p.quantity}${p.unit || ''}` : ''}
+                                  {p.expiry_date && (
+                                    <span className={expiringSoon ? 'text-red-600 font-bold ml-2' : 'text-gray-400 ml-2'}>
+                                      {daysToExpiry < 0 ? 'EXPIRED' : daysToExpiry === 0 ? 'expires today' : `expires in ${daysToExpiry}d`}
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                              <button onClick={() => deletePantryItem(p.id)}
+                                className="text-red-400 hover:text-red-600 text-lg ml-2 flex-shrink-0" title="Remove">×</button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <p className="text-xs text-gray-400 text-center mt-4">
+              When you generate or re-tune your meal plan, items in your pantry will be prioritized. Look for the 🧺 badge on meal cards.
+            </p>
           </div>
         )}
 
