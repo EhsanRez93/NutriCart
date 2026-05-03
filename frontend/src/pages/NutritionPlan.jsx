@@ -496,6 +496,9 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [pantryItems, setPantryItems] = useState([])
   const [pantryLoading, setPantryLoading] = useState(false)
   const [pantryDraft, setPantryDraft] = useState({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' })
+  const [initialPantryQtyById, setInitialPantryQtyById] = useState({})
+  const [stockWarnings, setStockWarnings] = useState([])
+  const [mealConsumptionMap, setMealConsumptionMap] = useState({}) // key: day-{i}:{mealName}
 
   // ── v16.0 Recipe steps + barcode state ──
   const [recipeModal, setRecipeModal]     = useState(null) // meal object or null
@@ -624,7 +627,18 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         console.error('❌ Pantry load error:', error)
       } else {
         console.log('📦 Pantry loaded:', data?.length || 0, 'items')
-        if (data) setPantryItems(data)
+        if (data) {
+          setPantryItems(data)
+          setInitialPantryQtyById(prev => {
+            const next = { ...prev }
+            data.forEach(p => {
+              if (next[p.id] === undefined && Number.isFinite(Number(p.quantity))) {
+                next[p.id] = Number(p.quantity)
+              }
+            })
+            return next
+          })
+        }
       }
     }
     loadPantry()
@@ -643,6 +657,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const todayKey        = `day-${activeDay}`
   const eatenToday      = eatenMeals[todayKey]   || {}
   const skippedToday    = skippedMeals[todayKey] || {}
+  const firstUpcomingMealName = currentDayMeals.find(m => !(eatenMeals[todayKey] || {})[m.name] && !(skippedMeals[todayKey] || {})[m.name])?.name
 
   const actualIntake = {
     calories: Object.values(eatenToday).reduce((s, m) => s + (m.calories || 0), 0),
@@ -651,10 +666,100 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     fats:     Object.values(eatenToday).reduce((s, m) => s + (m.fats     || 0), 0),
   }
 
+  function toCanonicalUnit(u = '') {
+    const unit = String(u || '').trim().toLowerCase()
+    if (unit === 'x' || unit === 'pc') return 'pcs'
+    return unit
+  }
+
+  function normalizeItemText(raw = '') {
+    return String(raw)
+      .toLowerCase()
+      .replace(/\([^)]*\)/g, ' ')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  }
+
+  function parseItemAmount(raw = '') {
+    const text = String(raw).toLowerCase()
+    const match = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/)
+    if (match) return { qty: parseFloat(match[1]), unit: toCanonicalUnit(match[2]) }
+    const numOnly = text.match(/(\d+(?:\.\d+)?)/)
+    if (numOnly) return { qty: parseFloat(numOnly[1]), unit: 'pcs' }
+    return { qty: 1, unit: 'pcs' }
+  }
+
+  function convertToUnit(qty, fromUnit, toUnit) {
+    const from = toCanonicalUnit(fromUnit)
+    const to = toCanonicalUnit(toUnit)
+    if (!Number.isFinite(qty)) return null
+    if (!from || !to || from === to) return qty
+    if (from === 'kg' && to === 'g') return qty * 1000
+    if (from === 'g' && to === 'kg') return qty / 1000
+    if (from === 'l' && to === 'ml') return qty * 1000
+    if (from === 'ml' && to === 'l') return qty / 1000
+    if (from === 'tbsp' && to === 'tsp') return qty * 3
+    if (from === 'tsp' && to === 'tbsp') return qty / 3
+    return null
+  }
+
+  function getMealPantryRequirements(meal) {
+    const mealItems = Array.isArray(meal?.items) ? meal.items : []
+    const reqs = []
+    for (const rawItem of mealItems) {
+      const normalized = normalizeItemText(rawItem)
+      const amount = parseItemAmount(rawItem)
+      const candidates = pantryItems
+        .filter(p => normalized.includes(String(p.name || '').toLowerCase()))
+        .sort((a, b) => (String(b.name || '').length - String(a.name || '').length))
+      const match = candidates[0]
+      if (!match) continue
+      const pantryUnit = toCanonicalUnit(match.unit || amount.unit || 'pcs')
+      const converted = convertToUnit(amount.qty, amount.unit, pantryUnit)
+      reqs.push({
+        id: match.id,
+        name: match.name,
+        unit: pantryUnit,
+        neededQty: Number.isFinite(converted) ? converted : amount.qty,
+      })
+    }
+    return reqs
+  }
+
+  function isMealBlockedByPantry(meal) {
+    const reqs = getMealPantryRequirements(meal)
+    if (reqs.length === 0) return false
+    return reqs.some(r => {
+      const item = pantryItems.find(p => p.id === r.id)
+      const available = Number(item?.quantity)
+      return Number.isFinite(available) && available <= 0
+    })
+  }
+
+  function pushStockWarning(warning) {
+    setStockWarnings(prev => {
+      if (prev.some(w => w.key === warning.key)) return prev
+      return [warning, ...prev].slice(0, 5)
+    })
+  }
+
   // ── Toggle eaten — saves to Supabase ──
   async function toggleEaten(meal) {
     const key              = meal.name
     const isCurrentlyEaten = !!(eatenMeals[todayKey] || {})[key]
+
+    if (!isCurrentlyEaten && isMealBlockedByPantry(meal)) {
+      pushStockWarning({
+        key: `blocked:${todayKey}:${meal.name}`,
+        type: 'blocked',
+        itemName: meal.name,
+        qtyLeft: 0,
+        unit: '',
+        time: Date.now(),
+      })
+      return
+    }
 
     setEatenMeals(prev => {
       const d = { ...(prev[todayKey] || {}) }
@@ -673,7 +778,67 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         .eq('user_id', userId)
         .eq('meal_name', key)
         .eq('plan_day_index', activeDay)
+
+      // Restore pantry quantities when unmarking as eaten
+      const consumeKey = `${todayKey}:${key}`
+      const consumed = mealConsumptionMap[consumeKey] || []
+      if (consumed.length > 0) {
+        for (const c of consumed) {
+          const item = pantryItems.find(p => p.id === c.id)
+          if (!item) continue
+          const current = Number(item.quantity)
+          if (!Number.isFinite(current)) continue
+          await updatePantryItem(c.id, { quantity: +(current + c.qty).toFixed(3) })
+        }
+        setMealConsumptionMap(prev => {
+          const next = { ...prev }
+          delete next[consumeKey]
+          return next
+        })
+      }
     } else {
+      // Consume pantry quantities for this meal
+      const requirements = getMealPantryRequirements(meal)
+      const consumed = []
+      for (const req of requirements) {
+        const item = pantryItems.find(p => p.id === req.id)
+        if (!item) continue
+        const available = Number(item.quantity)
+        if (!Number.isFinite(available)) continue
+        const nextQty = Math.max(0, +(available - req.neededQty).toFixed(3))
+        await updatePantryItem(req.id, { quantity: nextQty })
+        consumed.push({ id: req.id, qty: req.neededQty, unit: req.unit })
+
+        const initial = Number(initialPantryQtyById[item.id])
+        if (Number.isFinite(initial) && initial > 0) {
+          const threshold = initial * 0.2
+          if (available > threshold && nextQty <= threshold && nextQty > 0) {
+            pushStockWarning({
+              key: `low:${item.id}`,
+              type: 'low',
+              itemName: item.name,
+              qtyLeft: nextQty,
+              unit: item.unit || '',
+              time: Date.now(),
+            })
+          }
+          if (nextQty <= 0) {
+            pushStockWarning({
+              key: `out:${item.id}`,
+              type: 'out',
+              itemName: item.name,
+              qtyLeft: 0,
+              unit: item.unit || '',
+              time: Date.now(),
+            })
+          }
+        }
+      }
+      if (consumed.length > 0) {
+        const consumeKey = `${todayKey}:${key}`
+        setMealConsumptionMap(prev => ({ ...prev, [consumeKey]: consumed }))
+      }
+
       await supabase.from('meal_logs').upsert({
         user_id:        userId,
         plan_day_index: activeDay,
@@ -827,12 +992,22 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       expiry_date: draft.expiry_date || null,
     }
     const { data, error } = await supabase.from('pantry_items').insert(payload).select().single()
-    if (data && !error) setPantryItems(prev => [data, ...prev])
+    if (data && !error) {
+      setPantryItems(prev => [data, ...prev])
+      if (Number.isFinite(Number(data.quantity))) {
+        setInitialPantryQtyById(prev => ({ ...prev, [data.id]: Number(data.quantity) }))
+      }
+    }
     setPantryLoading(false)
   }
 
   async function deletePantryItem(id) {
     setPantryItems(prev => prev.filter(p => p.id !== id))
+    setInitialPantryQtyById(prev => {
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
     if (!userId) return
     await supabase.from('pantry_items').delete().eq('id', id).eq('user_id', userId)
   }
@@ -1483,12 +1658,35 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             })()}
 
             <div className="space-y-4 mb-8">
+              {stockWarnings.length > 0 && (
+                <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl px-4 py-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-amber-800 font-bold text-sm">⚠ Pantry stock alert</p>
+                      <p className="text-amber-700 text-xs mt-0.5">
+                        {stockWarnings[0].type === 'low' && `Running low on ${stockWarnings[0].itemName} (${stockWarnings[0].qtyLeft}${stockWarnings[0].unit || ''} left)`}
+                        {stockWarnings[0].type === 'out' && `${stockWarnings[0].itemName} is out of stock`}
+                        {stockWarnings[0].type === 'blocked' && `Cannot mark this meal as eaten until pantry items are replenished`}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setStockWarnings(prev => prev.slice(1))}
+                      className="text-amber-700 hover:text-amber-900 text-xl leading-none">
+                      ×
+                    </button>
+                  </div>
+                </div>
+              )}
+
               {currentDayMeals.map((meal, i) => {
                 const eaten   = isMealEaten(meal)
                 const skipped = isMealSkipped(meal)
+                const blockedByPantry = isMealBlockedByPantry(meal)
+                const isFirstUpcoming = meal.name === firstUpcomingMealName
+                const disableMealActions = blockedByPantry && isFirstUpcoming && !eaten && !skipped
                 return (
                   <div key={i} className={`bg-white rounded-2xl p-5 shadow-sm transition border-2
-                    ${eaten ? 'border-green-400 bg-green-50' : skipped ? 'border-gray-200 opacity-60' : 'border-transparent hover:shadow-md'}`}>
+                    ${eaten ? 'border-green-400 bg-green-50' : skipped ? 'border-gray-200 opacity-60' : disableMealActions ? 'border-gray-300 bg-gray-100 opacity-70' : 'border-transparent hover:shadow-md'}`}>
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-3">
                         <span className="text-3xl">{mealIcon(meal.meal)}</span>
@@ -1577,7 +1775,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex gap-2">
                         <button onClick={() => toggleEaten(meal)}
-                          className={`text-sm font-bold px-4 py-1.5 rounded-full transition ${eaten ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'}`}>
+                          disabled={disableMealActions}
+                          className={`text-sm font-bold px-4 py-1.5 rounded-full transition ${disableMealActions ? 'bg-gray-300 text-gray-500 cursor-not-allowed' : eaten ? 'bg-green-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-green-100 hover:text-green-700'}`}>
                           {eaten ? '✅ Eaten' : '○ Mark as eaten'}
                         </button>
                         <button onClick={() => toggleSkipped(meal)}
@@ -1589,11 +1788,15 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         <button onClick={() => handleSwapMeal(meal)} className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition">🔄 Swap this meal</button>
                       )}
                       <button
-                        onClick={() => setRecipeModal(getScaledMealForCooking(meal))}
-                        className="text-xs text-green-700 font-semibold hover:text-green-800 transition">
+                        onClick={() => !disableMealActions && setRecipeModal(getScaledMealForCooking(meal))}
+                        disabled={disableMealActions}
+                        className={`text-xs font-semibold transition ${disableMealActions ? 'text-gray-400 cursor-not-allowed' : 'text-green-700 hover:text-green-800'}`}>
                         🍳 Cook this
                       </button>
                     </div>
+                    {disableMealActions && (
+                      <p className="text-xs text-gray-500 mt-2 font-semibold">🔒 Out of pantry stock for this upcoming meal. Refill item(s) to enable Cook/Eaten actions.</p>
+                    )}
                   </div>
                 )
               })}
