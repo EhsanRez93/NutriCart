@@ -30,6 +30,45 @@ function getGroqClient() {
   return new Groq({ apiKey })
 }
 
+async function createReceiptVisionCompletion(client, { messages, temperature = 0.2, max_tokens = 1600 }) {
+  const preferredModel = String(process.env.GROQ_RECEIPT_VISION_MODEL || '').trim()
+  const fallbackModels = [
+    preferredModel,
+    'meta-llama/llama-4-scout-17b-16e-instruct',
+    'llama-3.2-90b-vision-preview',
+    'llama-3.2-11b-vision-preview',
+  ].filter(Boolean)
+
+  const models = Array.from(new Set(fallbackModels))
+  const tried = []
+  let lastError = null
+
+  for (const model of models) {
+    try {
+      return await client.chat.completions.create({
+        model,
+        temperature,
+        max_tokens,
+        messages,
+      })
+    } catch (error) {
+      lastError = error
+      tried.push(model)
+      const msg = String(error?.message || '').toLowerCase()
+      const code = String(error?.code || '').toLowerCase()
+      const decommissioned = msg.includes('decommissioned') || msg.includes('no longer supported') || code.includes('model_decommissioned')
+      const unavailable = msg.includes('model') && (msg.includes('not found') || msg.includes('not exist') || msg.includes('unknown'))
+      if (!decommissioned && !unavailable) {
+        throw error
+      }
+    }
+  }
+
+  const err = new Error(`No supported Groq vision model available. Tried: ${tried.join(', ')}`)
+  err.cause = lastError
+  throw err
+}
+
 app.use(cors())
 app.use(express.json({ limit: '10mb' }))
 
@@ -1000,8 +1039,7 @@ Rules:
 
     const userPrompt = `Parse this grocery receipt image for pantry import. Store hint: ${storeHint || 'unknown'}`
 
-    const completion = await client.chat.completions.create({
-      model: 'llama-3.2-11b-vision-preview',
+    const completion = await createReceiptVisionCompletion(client, {
       temperature: 0.2,
       max_tokens: 1600,
       messages: [
