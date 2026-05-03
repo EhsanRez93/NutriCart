@@ -505,6 +505,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [receiptOcrError, setReceiptOcrError] = useState(null)
   const [receiptOcrItems, setReceiptOcrItems] = useState([])
   const [receiptOcrStore, setReceiptOcrStore] = useState('')
+  const [showAllReceiptItems, setShowAllReceiptItems] = useState(false)
   const [showReceiptSourcePicker, setShowReceiptSourcePicker] = useState(false)
   const [initialPantryQtyById, setInitialPantryQtyById] = useState({})
   const [stockWarnings, setStockWarnings] = useState([])
@@ -1278,6 +1279,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       } else {
         setReceiptOcrItems(parsedItems)
         setReceiptOcrStore(data.store || '')
+        setShowAllReceiptItems(false)
       }
     } catch (err) {
       setReceiptOcrError(err.message || 'Receipt OCR failed. Please try again.')
@@ -2817,13 +2819,17 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <p className="text-xs font-bold text-emerald-800">🧾 Receipt parsed{receiptOcrStore ? ` · ${receiptOcrStore}` : ''} · {receiptOcrItems.length} items</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {receiptOcrItems.slice(0, 8).map((it, idx) => (
+                    {(showAllReceiptItems ? receiptOcrItems : receiptOcrItems.slice(0, 8)).map((it, idx) => (
                       <span key={`${it.name}-${idx}`} className="text-xs bg-white border border-emerald-200 text-emerald-700 px-2 py-1 rounded-full">
                         {it.name} ({`${Number(it.quantity) || 1}${it.unit || 'pcs'}`})
                       </span>
                     ))}
                     {receiptOcrItems.length > 8 && (
-                      <span className="text-xs text-emerald-700 font-semibold px-1">+{receiptOcrItems.length - 8} more</span>
+                      <button
+                        onClick={() => setShowAllReceiptItems(v => !v)}
+                        className="text-xs text-emerald-700 font-semibold px-2 py-1 underline hover:text-emerald-900">
+                        {showAllReceiptItems ? 'Show less ▲' : `+${receiptOcrItems.length - 8} more ▼`}
+                      </button>
                     )}
                   </div>
                   <button
