@@ -185,8 +185,17 @@ ${expiringSoon.length > 0 ? `- Items expiring within 3 days MUST appear in the f
 app.post('/api/swapmeal', async (req, res) => {
   const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
-    const { meal, profile } = req.body
+    const { meal, profile, swapMode = 'ai_suggested', pantryItems = [] } = req.body
     const client = getGroqClient()
+
+    const selectedSwapMode = swapMode === 'pantry_based' ? 'pantry_based' : 'ai_suggested'
+    const pantryList = Array.isArray(pantryItems) && pantryItems.length > 0
+      ? pantryItems.map(p => `- ${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}`).join('\n')
+      : '- (no pantry items available)'
+
+    const swapModeInstruction = selectedSwapMode === 'pantry_based'
+      ? 'Build alternatives mainly from available pantry items; only add missing extras if strictly needed for nutrition balance.'
+      : 'Use fully AI-suggested alternatives (not constrained by pantry inventory), still aligned to goals and preferred store.'
 
     const prompt = `You are a professional nutritionist AI for NutriCart app.
 
@@ -200,6 +209,10 @@ The user does not like this meal:
 - Preferred store: ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
 - User goal: ${profile.goal}
 - User symptoms: ${Array.isArray(profile.symptoms) ? profile.symptoms.join(', ') : profile.symptoms}
+- Swap mode: ${selectedSwapMode}
+
+Available pantry items:
+${pantryList}
 
 Generate exactly 3 alternative meals that:
 1. Match the same meal type (${meal.meal})
@@ -207,6 +220,7 @@ Generate exactly 3 alternative meals that:
 3. Have similar protein (within 10g of ${meal.protein}g)
 4. Are completely different from "${meal.name}"
 5. Use products available at ${Array.isArray(profile.store) ? profile.store[0] : profile.store}
+6. ${swapModeInstruction}
 
 Respond ONLY with valid JSON, no other text:
 {
@@ -243,6 +257,7 @@ Respond ONLY with valid JSON, no other text:
         meal_name: meal.name,
         meal_type: meal.meal,
         goal:      profile.goal,
+        swap_mode: selectedSwapMode,
       },
     })
 

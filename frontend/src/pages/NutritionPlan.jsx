@@ -462,6 +462,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [swapMeal, setSwapMeal]             = useState(null)
   const [alternatives, setAlternatives]     = useState([])
   const [swapLoading, setSwapLoading]       = useState(false)
+  const [swapMode, setSwapMode]             = useState('ai_suggested')
+  const [swapModeMeal, setSwapModeMeal]     = useState(null)
   const [eatenMeals, setEatenMeals]         = useState({})
   const [skippedMeals, setSkippedMeals]     = useState({})
   const [showEditGoals, setShowEditGoals]   = useState(false)
@@ -946,17 +948,26 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     finally { setLoading(false) }
   }
 
-  async function handleSwapMeal(meal) {
+  async function handleSwapMeal(meal, mode = 'ai_suggested') {
+    setSwapMode(mode)
     setSwapMeal(meal); setSwapLoading(true); setAlternatives([])
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/swapmeal', {
         method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
-        body: JSON.stringify({ meal, profile })
+        body: JSON.stringify({ meal, profile, swapMode: mode, pantryItems })
       })
       const data = await response.json()
       if (data.success) setAlternatives(data.alternatives)
     } catch (err) { console.error(err) }
     finally { setSwapLoading(false) }
+  }
+
+  function openSwapChooserForMeal(meal, disableMealActions) {
+    if (disableMealActions) {
+      setSwapModeMeal(meal)
+      return
+    }
+    handleSwapMeal(meal, 'ai_suggested')
   }
 
   function confirmSwap(alternative) {
@@ -1799,7 +1810,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         </button>
                       </div>
                       {aiMealPlan && !eaten && !skipped && (
-                        <button onClick={() => handleSwapMeal(meal)} className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition">🔄 Swap this meal</button>
+                        <button onClick={() => openSwapChooserForMeal(meal, disableMealActions)} className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition">🔄 Swap this meal</button>
                       )}
                       <button
                         onClick={() => !disableMealActions && setRecipeModal(getScaledMealForCooking(meal))}
@@ -2371,6 +2382,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             <div className="bg-orange-50 rounded-xl p-3 mb-4">
               <p className="text-sm text-orange-700"><span className="font-bold">Replacing:</span> {swapMeal.name}</p>
               <p className="text-xs text-orange-500 mt-1">{swapMeal.calories} kcal · {swapMeal.protein}g protein</p>
+              <p className="text-xs text-orange-600 mt-1 font-semibold">Mode: {swapMode === 'pantry_based' ? 'Pantry-based alternatives' : 'AI suggested alternatives'}</p>
             </div>
             {swapLoading && <div className="text-center py-8"><div className="text-4xl mb-3">🤖</div><p className="text-gray-500 font-semibold">AI is finding alternatives...</p></div>}
             {!swapLoading && alternatives.length > 0 && (
@@ -2395,6 +2407,32 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {swapModeMeal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-3xl shadow-2xl p-6 max-w-md w-full">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-extrabold text-gray-800">🔄 Choose Swap Type</h3>
+              <button onClick={() => setSwapModeMeal(null)} className="text-gray-400 hover:text-gray-600 text-2xl font-bold">×</button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">This meal is out of stock. How do you want alternatives generated?</p>
+            <div className="space-y-2">
+              <button
+                onClick={() => { const meal = swapModeMeal; setSwapModeMeal(null); handleSwapMeal(meal, 'pantry_based') }}
+                className="w-full text-left px-4 py-3 rounded-xl border-2 border-green-300 bg-green-50 hover:bg-green-100 transition">
+                <p className="font-bold text-green-800 text-sm">🧺 Pantry-based alternatives</p>
+                <p className="text-xs text-green-700 mt-0.5">Prioritize ingredients you still have.</p>
+              </button>
+              <button
+                onClick={() => { const meal = swapModeMeal; setSwapModeMeal(null); handleSwapMeal(meal, 'ai_suggested') }}
+                className="w-full text-left px-4 py-3 rounded-xl border-2 border-purple-300 bg-purple-50 hover:bg-purple-100 transition">
+                <p className="font-bold text-purple-800 text-sm">🤖 AI suggested alternatives</p>
+                <p className="text-xs text-purple-700 mt-0.5">Suggest best meals regardless of pantry constraints.</p>
+              </button>
+            </div>
           </div>
         </div>
       )}
