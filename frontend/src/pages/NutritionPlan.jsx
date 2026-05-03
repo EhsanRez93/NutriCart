@@ -2819,11 +2819,20 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <p className="text-xs font-bold text-emerald-800">🧾 Receipt parsed{receiptOcrStore ? ` · ${receiptOcrStore}` : ''} · {receiptOcrItems.length} items</p>
                   <div className="mt-2 flex flex-wrap gap-1.5">
-                    {(showAllReceiptItems ? receiptOcrItems : receiptOcrItems.slice(0, 8)).map((it, idx) => (
-                      <span key={`${it.name}-${idx}`} className="text-xs bg-white border border-emerald-200 text-emerald-700 px-2 py-1 rounded-full">
-                        {it.name} ({`${Number(it.quantity) || 1}${it.unit || 'pcs'}`})
-                      </span>
-                    ))}
+                    {(showAllReceiptItems ? receiptOcrItems : receiptOcrItems.slice(0, 8)).map((it, idx) => {
+                      const realIdx = showAllReceiptItems ? idx : idx
+                      return (
+                        <span key={`${it.name}-${idx}`} className="inline-flex items-center gap-1 text-xs bg-white border border-emerald-200 text-emerald-700 pl-2 pr-1 py-1 rounded-full">
+                          {it.name} ({`${Number(it.quantity) || 1}${it.unit || 'pcs'}`})
+                          <button
+                            onClick={() => setReceiptOcrItems(prev => prev.filter(item => item !== it))}
+                            className="ml-0.5 text-red-400 hover:text-red-600 font-bold leading-none"
+                            title="Remove item">
+                            ×
+                          </button>
+                        </span>
+                      )
+                    })}
                     {receiptOcrItems.length > 8 && (
                       <button
                         onClick={() => setShowAllReceiptItems(v => !v)}
