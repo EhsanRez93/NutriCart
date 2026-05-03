@@ -696,10 +696,18 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       .trim()
   }
 
+  const VOL_TO_ML = { tbsp: 15, tsp: 5, cup: 240 }
+
   function parseItemAmount(raw = '') {
     const text = String(raw).toLowerCase()
     const match = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/)
-    if (match) return { qty: parseFloat(match[1]), unit: toCanonicalUnit(match[2]) }
+    if (match) {
+      let qty = parseFloat(match[1])
+      let unit = toCanonicalUnit(match[2])
+      // Normalize volume cooking units → mL for consistent pantry deduction
+      if (VOL_TO_ML[unit]) { qty = +(qty * VOL_TO_ML[unit]).toFixed(1); unit = 'ml' }
+      return { qty, unit }
+    }
     const numOnly = text.match(/(\d+(?:\.\d+)?)/)
     if (numOnly) return { qty: parseFloat(numOnly[1]), unit: 'pcs' }
     return { qty: 1, unit: 'pcs' }

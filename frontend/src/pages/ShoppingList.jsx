@@ -56,11 +56,17 @@ function toCanonicalUnit(unit = '') {
   return u || 'pcs'
 }
 
+const VOL_TO_ML = { tbsp: 15, tsp: 5, cup: 240 }
+
 function parseIngredientAmount(raw = '') {
   const text = String(raw).toLowerCase()
   const match = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/)
   if (match) {
-    return { qty: parseFloat(match[1]), unit: toCanonicalUnit(match[2]) }
+    let qty = parseFloat(match[1])
+    let unit = toCanonicalUnit(match[2])
+    // Normalize volume cooking units → mL so oils/liquids always show in mL
+    if (VOL_TO_ML[unit]) { qty = +(qty * VOL_TO_ML[unit]).toFixed(1); unit = 'ml' }
+    return { qty, unit }
   }
   const fraction = text.match(/(\d+)\s*\/\s*(\d+)/)
   if (fraction) {
