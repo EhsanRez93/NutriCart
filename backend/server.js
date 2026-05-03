@@ -1024,28 +1024,47 @@ Task:
 1) Read the receipt image carefully.
 2) Extract only FOOD/INGREDIENT items. SKIP non-food items entirely (toilet paper, paper towels, dental floss, cleaning products, hygiene items, household goods — anything not eaten).
 3) Normalize each item to a generic English ingredient name in lowercase (e.g. "Baklažán" → "eggplant", "Basmati ryža" → "basmati rice").
-4) Extract the REAL quantity in weight or volume units using these rules in order:
-   a) Weight/volume in product name × pcs count: "Parad.pretlak 140g 3 ks" → qty:420, unit:"g"; "Maslo 250g 1 ks" → qty:250, unit:"g"; "Čerstvé mlieko 1l 1 ks" → qty:1, unit:"l"; "Černice 125g 1 ks" → qty:125, unit:"g"
+4) Extract the REAL quantity in weight or volume units using these strict rules:
+   a) Weight/volume printed in product name × pcs count: "Parad.pretlak 140g 3 ks" → qty:420, unit:"g"; "Maslo 250g 1 ks" → qty:250, unit:"g"; "Čerstvé mlieko 1l 1 ks" → qty:1, unit:"l"; "Černice 125g 1 ks" → qty:125, unit:"g"; "Hov.burger 4x125g 1 ks" → qty:500, unit:"g"
    b) Item sold by weight directly: "Baklažán 1.066 kg" → qty:1.066, unit:"kg"; "Banány 2.136 kg" → qty:2.136, unit:"kg"
-   c) Multiple pcs with pack weight: "Kidney fazuľa 420g 2 ks" → qty:840, unit:"g"
-   d) Eggs: always use pcs (e.g. "Vajcia M 30ks" → qty:30, unit:"pcs", needsWeight:false)
-   e) Fresh produce sold by piece (tomatoes, peppers bought as individual items): use pcs, needsWeight:false
-   f) Packaged food with ONLY pcs visible and NO weight/volume anywhere (rice bag, lentil bag, pasta, canned goods where weight is not shown): use qty:pcs_count, unit:"pcs", needsWeight:true — these need the user to confirm weight later
+   c) Multiple pcs × pack weight: "Kidney fazuľa 420g 2 ks" → qty:840, unit:"g"
+   d) Eggs: always pcs (e.g. "Vajcia M 30ks" → qty:30, unit:"pcs", needsWeight:false)
+   e) Fresh produce sold by individual piece (whole tomatoes, whole peppers, whole fruits when no weight shown): use pcs, needsWeight:false
+   f) Packaged dry/canned goods with NO weight visible on receipt line — use your knowledge of STANDARD PACKAGE SIZES to infer weight:
+      - rice bag 1 ks → 1000g (standard 1kg bag)
+      - lentils bag 1 ks → 500g (standard 500g bag); 2 ks → 1000g
+      - chickpeas can 1 ks → 400g (standard 400g can)
+      - tuna can 1 ks → 160g; 3 ks → 480g
+      - pasta/spaghetti 1 ks → 500g; 2 ks → 1000g
+      - processed cheese block 1 ks → 200g
+      - mascarpone 1 ks → 250g
+      - tomato paste/concentrate 1 ks → 140g
+      - butter 1 ks → 250g
+      - milk 1l carton 1 ks → 1000ml
+      - cream 1 ks → 200ml
+      - yogurt 1 ks → 150g
+      - flour 1 ks → 1000g
+      - sugar 1 ks → 1000g
+      - oil 1 ks → 1000ml
+      - bread 1 ks → 500g
+      - canned beans/legumes 1 ks → 400g
+      Set needsWeight:false for these (you inferred the weight). Set confidence lower (0.6) when inferring.
+   g) If the package size is truly unknown and cannot be reasonably inferred, set unit:"pcs", needsWeight:true.
 5) Infer broad category: fruits, vegetables, dairy, meat, fish, grains, legumes, oils, spices, canned, pantry.
-6) Correct obvious OCR/store shorthand (Lidl SK/CZ abbreviations: "Feferónky"→peppers, "Cícer"→chickpeas, "šošovica"→lentils, "Tek.syr"→processed cheese, "Kur.steh."→chicken thighs, "Hov.burger"→beef burger, "Hov.min.steak"→beef steak, "Čerešne"→cherries).
+6) Correct obvious OCR/store shorthand (Lidl SK/CZ: "Feferónky"→peppers, "Cícer"→chickpeas, "šošovica"→lentils, "Tek.syr"→processed cheese, "Kur.steh."→chicken thighs, "Hov.burger"→beef burger, "Hov.min.steak"→beef steak, "Čerešne"→cherries).
 
 Return ONLY valid JSON:
 {
   "store": "string or empty",
   "items": [
     {
-      "name": "eggplant",
-      "quantity": 1.066,
-      "unit": "kg",
-      "category": "vegetables",
+      "name": "basmati rice",
+      "quantity": 2000,
+      "unit": "g",
+      "category": "grains",
       "needsWeight": false,
-      "rawText": "Baklažán 1,066 kg",
-      "confidence": 0.95
+      "rawText": "Basmati ryža 2 ks",
+      "confidence": 0.6
     }
   ]
 }
@@ -1053,7 +1072,8 @@ Return ONLY valid JSON:
 Rules:
 - units must be one of: pcs, g, kg, ml, l, tsp, tbsp, cup
 - quantity must be a positive number
-- needsWeight: true only when unit is "pcs" AND item is a packaged food that would normally be stored by weight/volume
+- needsWeight: true ONLY when unit is still "pcs" AND you genuinely cannot infer a standard package weight
+- pcs should only remain as unit for: eggs, fresh loose produce (tomatoes, peppers, fruit counted by piece), items with truly unknown size
 - confidence range 0..1
 - name must be English lowercase
 - Return JSON only, no markdown fences.`
