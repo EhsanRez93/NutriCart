@@ -87,6 +87,8 @@ function normalizeIngredientName(raw = '') {
     // Drop source/store noise that should never create unique shopping items
     .replace(/\b(pantry|fridge|freezer|lidl|kaufland|billa|tesco|spar|aldi|penny)\b/g, ' ')
     .replace(/\b\d+(?:\.\d+)?\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/g, ' ')
+    // Strip spelled-out measurement words (e.g. "tablespoon olive oil" → "olive oil")
+    .replace(/\b(tablespoons?|teaspoons?|cups?|grams?|kilograms?|milliliters?|liters?|pieces?|slices?|handful|pinch|dash|cloves?|head|bunch|sprig)\b/g, ' ')
     .replace(/\b\d+\s*\/\s*\d+\b/g, ' ')
     .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
     .replace(/[^a-z\s]/g, ' ')
@@ -180,6 +182,14 @@ function extractIngredients(aiMealPlan, staticDayPlan) {
     }
 
     allItems[key].count += 1
+    // If the existing entry has a generic 'pcs' unit but this occurrence has a real unit,
+    // upgrade to the real unit (e.g. "Olive oil" pcs → "Olive oil 1 tbsp" → 15ml)
+    if (allItems[key].totalUnit === 'pcs' && parsed.unit !== 'pcs') {
+      allItems[key].totalQty  = parsed.qty
+      allItems[key].totalUnit = parsed.unit
+      allItems[key].amountLabel = formatAmount(parsed.qty, parsed.unit)
+      return
+    }
     const converted = convertQty(parsed.qty, parsed.unit, allItems[key].totalUnit)
     if (Number.isFinite(converted)) {
       allItems[key].totalQty = +(allItems[key].totalQty + converted).toFixed(3)
@@ -212,7 +222,8 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
 
   // ── Fetch real prices whenever items list or store changes ──
   useEffect(() => {
-    const itemNames = Object.values(rawItems).map(i => i.baseName || i.name)
+    // Include the amount label so the backend can price by weight (e.g. "olive oil 15ml")
+    const itemNames = Object.values(rawItems).map(i => `${i.baseName || i.name}${i.amountLabel ? ' ' + i.amountLabel : ''}`.trim())
     if (itemNames.length === 0) return
     setPricesLoading(true)
     fetch(`${API}/api/prices`, {
