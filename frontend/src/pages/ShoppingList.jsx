@@ -76,14 +76,37 @@ function parseIngredientAmount(raw = '') {
 }
 
 function normalizeIngredientName(raw = '') {
-  return String(raw)
+  let cleaned = String(raw)
     .toLowerCase()
+    // Drop source/store noise that should never create unique shopping items
+    .replace(/\b(pantry|fridge|freezer|lidl|kaufland|billa|tesco|spar|aldi|penny)\b/g, ' ')
     .replace(/\b\d+(?:\.\d+)?\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/g, ' ')
     .replace(/\b\d+\s*\/\s*\d+\b/g, ' ')
     .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
     .replace(/[^a-z\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+
+  // Canonicalize common singular/plural variants so they merge into one line item
+  const singularMap = {
+    eggs: 'egg',
+    tomatoes: 'tomato',
+    potatoes: 'potato',
+    onions: 'onion',
+    carrots: 'carrot',
+    mushrooms: 'mushroom',
+    peppers: 'pepper',
+    berries: 'berry',
+  }
+
+  cleaned = cleaned
+    .split(' ')
+    .map(w => singularMap[w] || w)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return cleaned
 }
 
 function toTitleCase(text = '') {
