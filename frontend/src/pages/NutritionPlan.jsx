@@ -506,6 +506,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [receiptOcrItems, setReceiptOcrItems] = useState([])
   const [receiptOcrStore, setReceiptOcrStore] = useState('')
   const [showAllReceiptItems, setShowAllReceiptItems] = useState(false)
+  const [receiptEditingIdx, setReceiptEditingIdx] = useState(null)
+  const [receiptEditDraft, setReceiptEditDraft] = useState({ quantity: '', unit: 'g' })
   const [showReceiptSourcePicker, setShowReceiptSourcePicker] = useState(false)
   const [initialPantryQtyById, setInitialPantryQtyById] = useState({})
   const [stockWarnings, setStockWarnings] = useState([])
@@ -1280,6 +1282,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         setReceiptOcrItems(parsedItems)
         setReceiptOcrStore(data.store || '')
         setShowAllReceiptItems(false)
+        setReceiptEditingIdx(null)
       }
     } catch (err) {
       setReceiptOcrError(err.message || 'Receipt OCR failed. Please try again.')
@@ -2818,12 +2821,54 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
               {receiptOcrItems.length > 0 && (
                 <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
                   <p className="text-xs font-bold text-emerald-800">🧾 Receipt parsed{receiptOcrStore ? ` · ${receiptOcrStore}` : ''} · {receiptOcrItems.length} items</p>
+                  {receiptOcrItems.some(i => i.needsWeight) && (
+                    <p className="text-xs text-amber-700 mt-1">⚠️ Items marked in yellow need weight/unit — tap to edit before importing.</p>
+                  )}
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {(showAllReceiptItems ? receiptOcrItems : receiptOcrItems.slice(0, 8)).map((it, idx) => {
-                      const realIdx = showAllReceiptItems ? idx : idx
+                      const globalIdx = receiptOcrItems.indexOf(it)
+                      const isEditing = receiptEditingIdx === globalIdx
+                      const needsWeight = it.needsWeight && it.unit === 'pcs'
+                      if (isEditing) {
+                        return (
+                          <span key={`${it.name}-edit-${globalIdx}`} className="inline-flex items-center gap-1 text-xs bg-white border-2 border-amber-400 text-gray-700 pl-2 pr-1 py-1 rounded-full">
+                            <span className="font-semibold">{it.name}</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              value={receiptEditDraft.quantity}
+                              onChange={e => setReceiptEditDraft(d => ({ ...d, quantity: e.target.value }))}
+                              className="w-14 border border-gray-300 rounded px-1 py-0.5 text-xs text-center focus:outline-none focus:border-amber-400"
+                              autoFocus
+                            />
+                            <select
+                              value={receiptEditDraft.unit}
+                              onChange={e => setReceiptEditDraft(d => ({ ...d, unit: e.target.value }))}
+                              className="border border-gray-300 rounded px-1 py-0.5 text-xs focus:outline-none focus:border-amber-400">
+                              {['g','kg','ml','l','pcs'].map(u => <option key={u} value={u}>{u}</option>)}
+                            </select>
+                            <button
+                              onClick={() => {
+                                const qty = parseFloat(receiptEditDraft.quantity)
+                                if (qty > 0) {
+                                  setReceiptOcrItems(prev => prev.map((item, i) => i === globalIdx ? { ...item, quantity: qty, unit: receiptEditDraft.unit, needsWeight: false } : item))
+                                }
+                                setReceiptEditingIdx(null)
+                              }}
+                              className="text-emerald-600 hover:text-emerald-800 font-bold px-1" title="Confirm">✓</button>
+                            <button onClick={() => setReceiptEditingIdx(null)} className="text-gray-400 hover:text-gray-600 font-bold" title="Cancel">×</button>
+                          </span>
+                        )
+                      }
                       return (
-                        <span key={`${it.name}-${idx}`} className="inline-flex items-center gap-1 text-xs bg-white border border-emerald-200 text-emerald-700 pl-2 pr-1 py-1 rounded-full">
-                          {it.name} ({`${Number(it.quantity) || 1}${it.unit || 'pcs'}`})
+                        <span key={`${it.name}-${globalIdx}`} className={`inline-flex items-center gap-1 text-xs pl-2 pr-1 py-1 rounded-full border ${needsWeight ? 'bg-amber-50 border-amber-300 text-amber-800' : 'bg-white border-emerald-200 text-emerald-700'}`}>
+                          <button
+                            onClick={() => { setReceiptEditingIdx(globalIdx); setReceiptEditDraft({ quantity: String(it.quantity || 1), unit: it.unit === 'pcs' ? 'g' : it.unit }) }}
+                            className="hover:underline cursor-pointer text-left"
+                            title={needsWeight ? 'Tap to set weight/unit' : 'Tap to edit'}>
+                            {it.name} {needsWeight ? <span className="font-bold">({it.quantity}pcs ✏️)</span> : `(${Number(it.quantity) || 1}${it.unit || 'pcs'})`}
+                          </button>
                           <button
                             onClick={() => setReceiptOcrItems(prev => prev.filter(item => item !== it))}
                             className="ml-0.5 text-red-400 hover:text-red-600 font-bold leading-none"

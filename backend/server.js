@@ -1021,35 +1021,42 @@ app.post('/api/receipt-ocr', receiptUpload.single('receipt'), async (req, res) =
     const systemPrompt = `You are a grocery receipt OCR parser for a food pantry app.
 
 Task:
-1) Read the receipt image.
-2) Extract only food/ingredient items (ignore totals, taxes, loyalty lines, deposit fees, barcodes).
-3) If receipt text is non-English, translate item names to English.
-4) Normalize each item to generic ingredient names in English lowercase.
-5) Parse quantity + unit when visible. If quantity is not visible, use quantity=1 and unit="pcs".
-6) Infer broad category for each item (e.g. fruits, vegetables, dairy, meat, fish, grains, oils, spices, pantry).
-7) Correct obvious OCR/store shorthand (e.g. Lidl SK/CZ abbreviations).
+1) Read the receipt image carefully.
+2) Extract only FOOD/INGREDIENT items. SKIP non-food items entirely (toilet paper, paper towels, dental floss, cleaning products, hygiene items, household goods — anything not eaten).
+3) Normalize each item to a generic English ingredient name in lowercase (e.g. "Baklažán" → "eggplant", "Basmati ryža" → "basmati rice").
+4) Extract the REAL quantity in weight or volume units using these rules in order:
+   a) Weight/volume in product name × pcs count: "Parad.pretlak 140g 3 ks" → qty:420, unit:"g"; "Maslo 250g 1 ks" → qty:250, unit:"g"; "Čerstvé mlieko 1l 1 ks" → qty:1, unit:"l"; "Černice 125g 1 ks" → qty:125, unit:"g"
+   b) Item sold by weight directly: "Baklažán 1.066 kg" → qty:1.066, unit:"kg"; "Banány 2.136 kg" → qty:2.136, unit:"kg"
+   c) Multiple pcs with pack weight: "Kidney fazuľa 420g 2 ks" → qty:840, unit:"g"
+   d) Eggs: always use pcs (e.g. "Vajcia M 30ks" → qty:30, unit:"pcs", needsWeight:false)
+   e) Fresh produce sold by piece (tomatoes, peppers bought as individual items): use pcs, needsWeight:false
+   f) Packaged food with ONLY pcs visible and NO weight/volume anywhere (rice bag, lentil bag, pasta, canned goods where weight is not shown): use qty:pcs_count, unit:"pcs", needsWeight:true — these need the user to confirm weight later
+5) Infer broad category: fruits, vegetables, dairy, meat, fish, grains, legumes, oils, spices, canned, pantry.
+6) Correct obvious OCR/store shorthand (Lidl SK/CZ abbreviations: "Feferónky"→peppers, "Cícer"→chickpeas, "šošovica"→lentils, "Tek.syr"→processed cheese, "Kur.steh."→chicken thighs, "Hov.burger"→beef burger, "Hov.min.steak"→beef steak, "Čerešne"→cherries).
 
 Return ONLY valid JSON:
 {
   "store": "string or empty",
   "items": [
     {
-      "name": "olive oil",
-      "quantity": 1,
-      "unit": "l",
-      "category": "oils",
-      "rawText": "optional raw line",
-      "confidence": 0.0
+      "name": "eggplant",
+      "quantity": 1.066,
+      "unit": "kg",
+      "category": "vegetables",
+      "needsWeight": false,
+      "rawText": "Baklažán 1,066 kg",
+      "confidence": 0.95
     }
   ]
 }
 
 Rules:
-- Keep units to: pcs, g, kg, ml, l, tsp, tbsp, cup, pack
-- quantity must be numeric
+- units must be one of: pcs, g, kg, ml, l, tsp, tbsp, cup
+- quantity must be a positive number
+- needsWeight: true only when unit is "pcs" AND item is a packaged food that would normally be stored by weight/volume
 - confidence range 0..1
-- name must be English
-- Return JSON only, no markdown.`
+- name must be English lowercase
+- Return JSON only, no markdown fences.`
 
     const userPrompt = `Parse this grocery receipt image for pantry import. Store hint: ${storeHint || 'unknown'}`
 
@@ -1106,6 +1113,7 @@ Rules:
           sourceName,
           quantity,
           unit,
+          needsWeight: unit === 'pcs' && item?.needsWeight === true,
           category: pantryCategory,
           rawText: String(item?.rawText || ''),
           confidence: Number.isFinite(Number(item?.confidence)) ? Math.max(0, Math.min(1, Number(item.confidence))) : 0.7,
