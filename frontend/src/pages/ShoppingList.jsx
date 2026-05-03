@@ -1,4 +1,7 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import posthog from 'posthog-js'
+
+const API = 'https://nutricart-production-cd53.up.railway.app'
 
 function categorizeItem(itemName) {
   const name = itemName.toLowerCase()
@@ -75,8 +78,37 @@ export default function ShoppingList({ profile, aiMealPlan }) {
   const [activeStore, setActiveStore] = useState(Array.isArray(profile.store) ? profile.store[0] : profile.store)
   const [showComparison, setShowComparison] = useState(false)
   const [aiSelecting, setAiSelecting] = useState(false)
+  const [pricesLoading, setPricesLoading] = useState(false)
 
   const stores     = Array.isArray(profile.store) ? profile.store : [profile.store]
+
+  // ── Fetch real prices whenever items list or store changes ──
+  useEffect(() => {
+    const itemNames = Object.values(rawItems).map(i => i.name)
+    if (itemNames.length === 0) return
+    setPricesLoading(true)
+    fetch(`${API}/api/prices`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ items: itemNames, store: activeStore }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.priced)) {
+          const priceMap = {}
+          data.priced.forEach(p => { priceMap[p.item.toLowerCase().trim()] = p.price })
+          setItems(prev => {
+            const updated = {}
+            Object.entries(prev).forEach(([k, v]) => {
+              updated[k] = { ...v, basePrice: priceMap[v.name.toLowerCase().trim()] ?? v.basePrice }
+            })
+            return updated
+          })
+        }
+      })
+      .catch(() => {}) // silently fall back to estimates
+      .finally(() => setPricesLoading(false))
+  }, [activeStore, aiMealPlan])
   const itemList   = Object.values(items)
   const totalItems = itemList.length
   const checkedItems  = itemList.filter(i => i.checked).length
@@ -118,6 +150,7 @@ export default function ShoppingList({ profile, aiMealPlan }) {
 
   // AI selection: pick items that best meet budget and nutrition
   function handleAISelect() {
+    posthog.capture('ai_shopping_selection_used', { store: activeStore, total_items: totalItems })
     setAiSelecting(true)
     setTimeout(() => {
       const budget = 50 // €50 weekly budget
@@ -216,7 +249,7 @@ export default function ShoppingList({ profile, aiMealPlan }) {
           </button>
         ))}
         {stores.length > 1 && (
-          <button onClick={() => setShowComparison(true)}
+          <button onClick={() => { posthog.capture('price_comparison_opened', { store_count: stores.length }); setShowComparison(true) }}
             className="px-4 py-2 rounded-full text-sm font-semibold transition bg-blue-50 text-blue-700 hover:bg-blue-100">
             📊 Compare Prices
           </button>
@@ -243,6 +276,7 @@ export default function ShoppingList({ profile, aiMealPlan }) {
             {selectedItems.length > 0 ? `${selectedItems.length} selected items` : 'Full list'} at {activeStore}
             {activeStore === cheapestStore && stores.length > 1 && <span className="ml-1 bg-green-200 text-green-800 text-xs px-1 rounded">Cheapest</span>}
           </p>
+          {pricesLoading && <p className="text-green-500 text-xs mt-1 animate-pulse">🔄 Fetching real prices...</p>}
         </div>
         <div className="text-right">
           <p className="text-3xl font-extrabold text-green-700">~€{getTotalForStore(activeStore)}</p>
@@ -301,6 +335,7 @@ export default function ShoppingList({ profile, aiMealPlan }) {
         <p className="text-gray-400 text-sm mb-4">Open {activeStore} online shop and add your items</p>
         <button
           onClick={() => {
+            posthog.capture('store_online_shop_opened', { store: activeStore, checked_items: checkedItems, total_items: totalItems })
             const urls = { 'Lidl': 'https://www.lidl.sk', 'Kaufland': 'https://www.kaufland.sk', 'Billa': 'https://www.billa.sk', 'Tesco': 'https://www.tesco.com', 'Spar': 'https://www.spar.sk', 'Aldi': 'https://www.aldi.sk', 'Penny': 'https://www.penny.sk' }
             window.open(urls[activeStore] || `https://www.google.com/search?q=${activeStore}+online+shop`, '_blank')
           }}

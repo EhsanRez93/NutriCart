@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import posthog from 'posthog-js'
 
 const steps = [
   { id: 1, question: "What's your name?",          field: 'name',          type: 'text',   placeholder: 'e.g. Peter',  icon: '👤' },
@@ -82,6 +83,12 @@ export default function Onboarding({ onComplete }) {
         updated.holidayMode = 'normal'
         setProfile(updated)
         setDone(true)
+        posthog.capture('onboarding_completed', {
+          goal:         updated.goal,
+          country:      updated.country,
+          holiday_mode: updated.holidayMode,
+          symptoms:     updated.symptoms,
+        })
         if (onComplete) onComplete(updated)
         return
       }
@@ -93,6 +100,12 @@ export default function Onboarding({ onComplete }) {
 
     if (step + 1 >= totalSteps) {
       setDone(true)
+      posthog.capture('onboarding_completed', {
+        goal:         updated.goal,
+        country:      updated.country,
+        holiday_mode: updated.holidayMode,
+        symptoms:     updated.symptoms,
+      })
       if (onComplete) onComplete(updated)
     } else {
       setStep(s => s + 1)

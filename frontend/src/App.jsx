@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react'
+import posthog from 'posthog-js'
 import { supabase } from './supabase'
 import Landing from './pages/Landing'
 import Auth from './pages/Auth'
 import Onboarding from './pages/Onboarding'
 import NutritionPlan from './pages/NutritionPlan'
+import Privacy from './pages/Privacy'
+import Terms from './pages/Terms'
 
 export default function App() {
   const [page, setPage]               = useState('landing')
@@ -14,6 +17,7 @@ export default function App() {
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
+        posthog.identify(session.user.id, { email: session.user.email })
         setUser(session.user)
         loadProfile(session.user.id)
       } else {
@@ -129,6 +133,12 @@ export default function App() {
       fats:           nutrition.fats,
     }).eq('id', user.id)
 
+    posthog.capture('goals_updated', {
+      goal:           updatedGoals.goal,
+      current_weight: parseFloat(updatedGoals.currentWeight),
+      target_weight:  parseFloat(updatedGoals.targetWeight),
+    })
+
     setUserProfile(prev => ({
       ...prev,
       ...updatedGoals,
@@ -142,6 +152,8 @@ export default function App() {
   }
 
   async function handleSignOut() {
+    posthog.capture('user_signed_out')
+    posthog.reset()
     await supabase.auth.signOut()
     setPage('landing')
   }
@@ -159,9 +171,11 @@ export default function App() {
 
   return (
     <div>
-      {page === 'landing'    && <Landing onStart={() => setPage('auth')} />}
+      {page === 'landing'    && <Landing onStart={() => setPage('auth')} onNavigate={setPage} />}
       {page === 'auth'       && <Auth onAuth={handleAuth} />}
       {page === 'onboarding' && <Onboarding onComplete={handleOnboardingComplete} />}
+      {page === 'privacy'    && <Privacy onBack={() => setPage('landing')} />}
+      {page === 'terms'      && <Terms onBack={() => setPage('landing')} />}
       {page === 'plan'       && userProfile && (
         <NutritionPlan
           profile={userProfile}

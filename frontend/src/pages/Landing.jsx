@@ -1,4 +1,4 @@
-export default function Landing({ onStart }) {
+export default function Landing({ onStart, onNavigate }) {
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
       
@@ -63,8 +63,10 @@ export default function Landing({ onStart }) {
       </div>
 
       {/* Footer */}
-      <footer className="text-center py-6 text-gray-400 text-sm">
-        © 2026 NutriCart · Built with ❤️ and AI
+      <footer className="text-center py-6 text-gray-400 text-sm space-x-4">
+        <span>© 2026 NutriCart · Built with ❤️ and AI</span>
+        <button onClick={() => onNavigate('privacy')} className="hover:text-green-600 transition underline">Privacy Policy</button>
+        <button onClick={() => onNavigate('terms')} className="hover:text-green-600 transition underline">Terms of Service</button>
       </footer>
 
     </div>

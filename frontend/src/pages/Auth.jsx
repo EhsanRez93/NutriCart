@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import posthog from 'posthog-js'
 import { supabase } from '../supabase'
 
 export default function Auth({ onAuth }) {
@@ -16,16 +17,21 @@ export default function Auth({ onAuth }) {
 
     try {
       if (mode === 'signup') {
-        const { error } = await supabase.auth.signUp({ email, password })
+        const { data, error } = await supabase.auth.signUp({ email, password })
         if (error) throw error
+        posthog.identify(data.user?.id, { email })
+        posthog.capture('user_signed_up', { email })
         setSuccess('Account created! Please check your email to confirm, then log in.')
         setMode('login')
       } else {
         const { data, error } = await supabase.auth.signInWithPassword({ email, password })
         if (error) throw error
+        posthog.identify(data.user.id, { email })
+        posthog.capture('user_logged_in', { email })
         onAuth(data.user)
       }
     } catch (err) {
+      posthog.capture('login_failed', { mode, error: err.message })
       setError(err.message)
     } finally {
       setLoading(false)

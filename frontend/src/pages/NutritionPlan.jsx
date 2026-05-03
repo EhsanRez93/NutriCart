@@ -1,8 +1,11 @@
+import posthog from 'posthog-js'
 import { useState, useEffect } from 'react'
 import { supabase } from '../supabase'
 import ShoppingList from './ShoppingList'
 import ScoreCard from './ScoreCard'
 import ProgressTracker from './ProgressTracker'
+import RecipeStepsModal from './RecipeStepsModal'
+import BarcodeScanner from './BarcodeScanner'
 import {
   fetchHolidaysWindow,
   findHoliday,
@@ -445,6 +448,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [pantryLoading, setPantryLoading] = useState(false)
   const [pantryDraft, setPantryDraft] = useState({ name: '', quantity: '', unit: 'pcs', category: 'pantry', expiry_date: '' })
 
+  // ── v16.0 Recipe steps + barcode state ──
+  const [recipeModal, setRecipeModal]     = useState(null) // meal object or null
+  const [showBarcode, setShowBarcode]     = useState(false)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -659,7 +666,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     const planStart = chosenStartDate || startDate
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/mealplan', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
         body: JSON.stringify({
           ...profile,
           calories:     nutrition.calories,
@@ -678,6 +685,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         setStartDate(planStart)
         setActiveDay(getDayIndex(planStart))
         setActiveTab('meals')
+        posthog.capture('meal_plan_generated', { start_date: planStart, pantry_items: pantryItems.length })
         await onSaveMealPlan(data.mealPlan, planStart)
       } else {
         setAiError('Could not generate plan. Please try again.')
@@ -690,7 +698,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setSwapMeal(meal); setSwapLoading(true); setAlternatives([])
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/swapmeal', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
         body: JSON.stringify({ meal, profile })
       })
       const data = await response.json()
@@ -729,6 +737,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         return [...without, data].sort((a, b) => a.checkin_date.localeCompare(b.checkin_date))
       })
     }
+    posthog.capture('daily_checkin_submitted', { field, value })
     setCheckinSaving(false)
   }
 
@@ -783,7 +792,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       // Use the meals already loaded for this plan window
       const windowLogs = allMealLogs.filter(m => m.log_date >= planStart && m.log_date <= planEnd)
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/replan', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
         body: JSON.stringify({
           profile:     { ...profile, pantry: pantryItems },
           currentPlan: aiMealPlan,
@@ -830,7 +839,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setInsightsError(null)
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/insights', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id() },
         body: JSON.stringify({
           profile,
           mealLogs:   allMealLogs,
@@ -843,6 +852,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         setInsights(data.insights || [])
         setInsightsStats(data.stats || null)
         setInsightsGenAt(data.generatedAt || new Date().toISOString())
+        posthog.capture('insights_generated', { insight_count: (data.insights || []).length, sample_days: data.stats?.sampleDays })
         // Persist to profile so they show on next login
         if (userId) {
           await supabase.from('profiles').update({
@@ -1323,6 +1333,11 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       {aiMealPlan && !eaten && !skipped && (
                         <button onClick={() => handleSwapMeal(meal)} className="text-xs text-orange-600 font-semibold hover:text-orange-700 transition">🔄 Swap this meal</button>
                       )}
+                      <button
+                        onClick={() => setRecipeModal(meal)}
+                        className="text-xs text-green-700 font-semibold hover:text-green-800 transition">
+                        🍳 Cook this
+                      </button>
                     </div>
                   </div>
                 )
@@ -1620,7 +1635,14 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
 
             {/* Add item form */}
             <div className="bg-white rounded-2xl p-5 shadow-sm mb-6">
-              <h3 className="font-bold text-gray-800 mb-3">➕ Add to pantry</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="font-bold text-gray-800">➕ Add to pantry</h3>
+                <button
+                  onClick={() => setShowBarcode(true)}
+                  className="flex items-center gap-1.5 text-xs font-bold bg-purple-100 text-purple-700 px-3 py-1.5 rounded-full hover:bg-purple-200 transition">
+                  📷 Scan Barcode
+                </button>
+              </div>
               <div className="grid grid-cols-12 gap-2">
                 <input type="text" placeholder="Item name (e.g. spinach)"
                   value={pantryDraft.name}
@@ -1769,6 +1791,33 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       {showStartDate  && <StartDateModal onConfirm={generateAIPlan} onClose={() => setShowStartDate(false)} />}
       {showEditGoals  && <EditGoalsModal profile={profile} onSave={(g) => { onUpdateGoals(g); setShowEditGoals(false) }} onClose={() => setShowEditGoals(false)} />}
       {showMicroModal && <MicronutrientModal existing={medicalData} onSave={setMedicalData} onClose={() => setShowMicroModal(false)} />}
+
+      {/* v16.0 Recipe Steps modal */}
+      {recipeModal && (
+        <RecipeStepsModal
+          meal={recipeModal}
+          userId={userId}
+          onClose={() => setRecipeModal(null)}
+        />
+      )}
+
+      {/* v16.0 Barcode Scanner */}
+      {showBarcode && (
+        <BarcodeScanner
+          onDetected={(product) => {
+            setShowBarcode(false)
+            setPantryDraft(prev => ({
+              ...prev,
+              name:     product.name     || prev.name,
+              quantity: product.quantity || prev.quantity,
+              unit:     product.unit     || prev.unit,
+              category: product.category || prev.category,
+            }))
+            posthog.capture('barcode_scanned', { product_name: product.name, barcode: product.barcode })
+          }}
+          onClose={() => setShowBarcode(false)}
+        />
+      )}
 
       {swapMeal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">

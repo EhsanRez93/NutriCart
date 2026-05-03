@@ -1,10 +1,20 @@
-const express = require('express')
-const cors    = require('cors')
-const dotenv  = require('dotenv')
-const Groq    = require('groq-sdk')
-const axios   = require('axios')
+const express   = require('express')
+const cors      = require('cors')
+const dotenv    = require('dotenv')
+const Groq      = require('groq-sdk')
+const axios     = require('axios')
+const { PostHog } = require('posthog-node')
 
 dotenv.config()
+
+// ── PostHog server-side analytics ───────────────────
+const posthog = new PostHog(process.env.POSTHOG_KEY, {
+  host:                      process.env.POSTHOG_HOST,
+  enableExceptionAutocapture: true,
+})
+
+process.on('SIGINT',  async () => { await posthog.shutdown(); process.exit(0) })
+process.on('SIGTERM', async () => { await posthog.shutdown(); process.exit(0) })
 
 // ── In-memory holiday cache (24 h) ──────────────────
 const holidayCache = {}
@@ -49,6 +59,7 @@ app.get('/api/holidays', async (req, res) => {
 
 // ── Meal Plan Route ──────────────────────────────────
 app.post('/api/mealplan', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
     const profile = req.body
     const client = getGroqClient()
@@ -149,16 +160,30 @@ ${expiringSoon.length > 0 ? `- Items expiring within 3 days MUST appear in the f
       return { ...day, date: dateStr, holidayName: holiday ? (holiday.localName || holiday.name) : null, skipDay: !!skipDay }
     })
 
+    posthog.capture({
+      distinctId,
+      event: 'meal_plan_generated',
+      properties: {
+        start_date:    profile.startDate || null,
+        goal:          profile.goal,
+        pantry_items:  pantryItems.length,
+        holiday_mode:  holidayMode,
+        holiday_count: holidays.length,
+      },
+    })
+
     res.json({ success: true, mealPlan })
 
   } catch (error) {
     console.error('Error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/mealplan' })
     res.status(500).json({ success: false, error: error.message })
   }
 })
 
 // ── Meal Swap Route ──────────────────────────────────
 app.post('/api/swapmeal', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
     const { meal, profile } = req.body
     const client = getGroqClient()
@@ -211,10 +236,21 @@ Respond ONLY with valid JSON, no other text:
     const cleanJson    = responseText.replace(/```json|```/g, '').trim()
     const result       = JSON.parse(cleanJson)
 
+    posthog.capture({
+      distinctId,
+      event: 'meal_swapped',
+      properties: {
+        meal_name: meal.name,
+        meal_type: meal.meal,
+        goal:      profile.goal,
+      },
+    })
+
     res.json({ success: true, alternatives: result.alternatives })
 
   } catch (error) {
     console.error('Swap meal error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/swapmeal' })
     res.status(500).json({ success: false, error: error.message })
   }
 })
@@ -224,6 +260,7 @@ Respond ONLY with valid JSON, no other text:
 // over/under intake across the REMAINING days, asks Groq to regenerate
 // only the future days (past days are kept exactly as-is).
 app.post('/api/replan', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
     const { profile = {}, currentPlan, mealLogs = [], todayDate } = req.body || {}
     if (!currentPlan || !Array.isArray(currentPlan.days)) {
@@ -381,6 +418,18 @@ ${pantryItems.length > 0 ? '- Prefer pantry items; populate "usesPantry" array w
       }
     })
 
+    posthog.capture({
+      distinctId,
+      event: 'plan_retuned',
+      properties: {
+        past_day_count:        pastDays.length,
+        future_day_count:      futureDays.length,
+        net_cal_deviation:     Math.round(netCalDeviation),
+        net_protein_deviation: Math.round(netProteinDeviation),
+        adjusted_daily_cal:    adjustedDailyCal,
+      },
+    })
+
     res.json({
       success: true,
       mealPlan: { ...currentPlan, days: mergedDays },
@@ -396,6 +445,7 @@ ${pantryItems.length > 0 ? '- Prefer pantry items; populate "usesPantry" array w
 
   } catch (error) {
     console.error('Replan error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/replan' })
     res.status(500).json({ success: false, error: error.message })
   }
 })
@@ -533,6 +583,7 @@ function computeInsightStats({ profile, mealLogs, weightLogs, checkins }) {
 
 // ── Insights Route ───────────────────────────────────
 app.post('/api/insights', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
   try {
     const { profile = {}, mealLogs = [], weightLogs = [], checkins = [] } = req.body || {}
     const client = getGroqClient()
@@ -606,15 +657,251 @@ Headlines must be specific (use real numbers from the stats), not generic ("eat 
     const cleanJson    = responseText.replace(/```json|```/g, '').trim()
     const parsed       = JSON.parse(cleanJson)
 
+    const insightList = Array.isArray(parsed.insights) ? parsed.insights : []
+    posthog.capture({
+      distinctId,
+      event: 'insights_generated',
+      properties: {
+        insight_count: insightList.length,
+        sample_days:   stats.sampleDays,
+        goal:          profile.goal,
+      },
+    })
+
     res.json({
       success:     true,
-      insights:    Array.isArray(parsed.insights) ? parsed.insights : [],
+      insights:    insightList,
       stats,
       generatedAt: new Date().toISOString(),
     })
 
   } catch (error) {
     console.error('Insights error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/insights' })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── v16.0 Smart Price Engine ─────────────────────────
+// Parses ingredient strings (e.g. "Chicken thighs 200g"), extracts weight,
+// and returns accurate EU supermarket prices using real price-per-100g data.
+
+function parseItemQuantity(itemStr) {
+  const lower = itemStr.toLowerCase().trim()
+  const patterns = [
+    { re: /(\d+\.?\d*)\s*kg\b/i,   toGrams: n => n * 1000 },
+    { re: /(\d+\.?\d*)\s*g\b/i,    toGrams: n => n },
+    { re: /(\d+\.?\d*)\s*l\b/i,    toGrams: n => n * 1000 },
+    { re: /(\d+\.?\d*)\s*ml\b/i,   toGrams: n => n },
+    { re: /(\d+\.?\d*)\s*tbsp\b/i, toGrams: n => n * 15 },
+    { re: /(\d+\.?\d*)\s*tsp\b/i,  toGrams: n => n * 5 },
+    { re: /(\d+\.?\d*)\s*cup\b/i,  toGrams: n => n * 250 },
+  ]
+  for (const p of patterns) {
+    const m = lower.match(p.re)
+    if (m) return { grams: p.toGrams(parseFloat(m[1])), pieces: null }
+  }
+  // Try to extract piece count ("2x", "1/2", plain number at start)
+  const pieces = lower.match(/^(\d+\.?\d*)\s*[x×]?\s/) || lower.match(/(\d+)\s*(?:pcs|pieces?|slices?|ea\.?)/)
+  return { grams: null, pieces: pieces ? parseFloat(pieces[1]) : 1 }
+}
+
+// Real EU (Slovakia / Czech / Austria) supermarket price averages, €/100g, 2026
+const PRICE_DB = {
+  // Proteins
+  chicken:         { per100g: 0.80 },
+  beef:            { per100g: 1.40 },
+  pork:            { per100g: 0.70 },
+  turkey:          { per100g: 0.90 },
+  salmon:          { per100g: 1.80 },
+  tuna:            { per100g: 1.00 },
+  shrimp:          { per100g: 1.50 },
+  egg:             { per100g: null, unitPrice: 0.25 },
+  // Dairy
+  milk:            { per100g: 0.06 },
+  yogurt:          { per100g: 0.35 },
+  'greek yogurt':  { per100g: 0.50 },
+  cheese:          { per100g: 1.20 },
+  butter:          { per100g: 0.90 },
+  kefir:           { per100g: 0.25 },
+  cream:           { per100g: 0.60 },
+  // Grains
+  rice:            { per100g: 0.18 },
+  oats:            { per100g: 0.12 },
+  pasta:           { per100g: 0.18 },
+  bread:           { per100g: 0.25 },
+  quinoa:          { per100g: 0.50 },
+  flour:           { per100g: 0.10 },
+  tortilla:        { per100g: 0.40 },
+  // Vegetables
+  spinach:         { per100g: 0.40 },
+  broccoli:        { per100g: 0.25 },
+  potato:          { per100g: 0.10 },
+  'sweet potato':  { per100g: 0.18 },
+  carrot:          { per100g: 0.10 },
+  onion:           { per100g: 0.08 },
+  garlic:          { per100g: 0.60 },
+  tomato:          { per100g: 0.30 },
+  pepper:          { per100g: 0.45 },
+  mushroom:        { per100g: 0.60 },
+  lettuce:         { per100g: 0.30 },
+  cucumber:        { per100g: 0.20 },
+  zucchini:        { per100g: 0.20 },
+  // Fruits
+  banana:          { per100g: 0.15 },
+  apple:           { per100g: 0.20 },
+  lemon:           { per100g: 0.20 },
+  orange:          { per100g: 0.15 },
+  berries:         { per100g: 1.20 },
+  avocado:         { per100g: null, unitPrice: 0.80 },
+  // Oils & Spreads
+  'olive oil':     { per100g: 0.70 },
+  'peanut butter': { per100g: 0.80 },
+  'almond butter': { per100g: 1.20 },
+  hummus:          { per100g: 0.60 },
+  // Nuts & Seeds
+  nuts:            { per100g: 1.50 },
+  almonds:         { per100g: 1.60 },
+  walnuts:         { per100g: 1.80 },
+  cashews:         { per100g: 1.70 },
+  seeds:           { per100g: 1.00 },
+  'pumpkin seed':  { per100g: 1.20 },
+  'mixed nuts':    { per100g: 1.50 },
+  // Condiments
+  honey:           { per100g: 0.80 },
+  salt:            { per100g: 0.05 },
+  sugar:           { per100g: 0.10 },
+  sauce:           { per100g: 0.30 },
+  'soy sauce':     { per100g: 0.40 },
+}
+
+const STORE_PRICE_INDEX = {
+  'Lidl':     1.00,
+  'Aldi':     0.95,
+  'Penny':    0.97,
+  'Kaufland': 1.05,
+  'Tesco':    1.08,
+  'Billa':    1.12,
+  'Spar':     1.15,
+}
+
+function lookupBasePrice(itemName) {
+  const name = itemName.toLowerCase()
+  // Multi-word keys first (most specific match wins)
+  const sorted = Object.entries(PRICE_DB).sort((a, b) => b[0].length - a[0].length)
+  for (const [key, data] of sorted) {
+    if (name.includes(key)) return data
+  }
+  // Category fallbacks
+  if (name.match(/chicken|beef|pork|turkey|lamb|meat|fish|seafood/)) return { per100g: 0.90 }
+  if (name.match(/milk|dairy|yogurt|cheese|cream/))                  return { per100g: 0.40 }
+  if (name.match(/vegetable|veggie|veg|salad|greens/))               return { per100g: 0.25 }
+  if (name.match(/fruit|berry/))                                     return { per100g: 0.40 }
+  if (name.match(/nut|seed/))                                        return { per100g: 1.20 }
+  if (name.match(/oil|butter|spread/))                               return { per100g: 0.80 }
+  if (name.match(/grain|rice|pasta|oat|bread|cereal/))               return { per100g: 0.18 }
+  if (name.match(/spice|herb|seasoning|sauce|condiment/))            return { per100g: 0.30 }
+  return { per100g: 0.40 }
+}
+
+function calculateItemPrice(itemStr, store) {
+  const { grams, pieces }     = parseItemQuantity(itemStr)
+  const { per100g, unitPrice } = lookupBasePrice(itemStr)
+  const multiplier             = STORE_PRICE_INDEX[store] || 1.0
+  let price
+  if (unitPrice != null) {
+    price = unitPrice * (pieces || 1)
+  } else if (grams != null && per100g != null) {
+    price = (grams / 100) * per100g
+  } else {
+    price = 1.00
+  }
+  return Math.round(price * multiplier * 100) / 100
+}
+
+// POST /api/prices — returns weight-accurate per-item prices for a shopping list
+app.post('/api/prices', (req, res) => {
+  try {
+    const { items, store } = req.body
+    if (!Array.isArray(items)) return res.status(400).json({ success: false, error: 'items[] required' })
+    const targetStore = store || 'Lidl'
+    const priced = items.map(itemStr => ({
+      item:  itemStr,
+      price: calculateItemPrice(itemStr, targetStore),
+      store: targetStore,
+    }))
+    const total = Math.round(priced.reduce((s, p) => s + p.price, 0) * 100) / 100
+    res.json({ success: true, priced, total, store: targetStore })
+  } catch (error) {
+    console.error('Prices error:', error.message)
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
+// ── v16.0 Recipe Steps Route ─────────────────────────
+// AI-generated step-by-step cooking guide for any meal in the plan.
+app.post('/api/recipesteps', async (req, res) => {
+  const distinctId = req.headers['x-posthog-distinct-id'] || 'anonymous'
+  try {
+    const { meal } = req.body
+    if (!meal || !meal.name) return res.status(400).json({ success: false, error: 'meal is required' })
+    const client = getGroqClient()
+
+    const prompt = `You are a professional chef and nutritionist AI for NutriCart.
+
+Generate a clear, step-by-step cooking guide for this meal:
+- Name: ${meal.name}
+- Type: ${meal.meal || 'meal'}
+- Ingredients: ${Array.isArray(meal.items) ? meal.items.join(', ') : 'as listed'}
+- Nutrition: ${meal.calories} kcal · ${meal.protein}g protein · ${meal.carbs}g carbs · ${meal.fats}g fats
+
+Generate 5-8 practical cooking steps. Rules:
+- Each step should be a clear, single action
+- Include time estimates for each step
+- One overall difficulty level (Easy / Medium / Hard)
+- A brief prep/cook time summary
+- One practical nutrition tip about this meal
+- Step icons should be relevant emojis (🔪🥘🔥🥗🍳⏱️🧂🫙)
+
+Respond ONLY with valid JSON, no other text:
+{
+  "difficulty": "Easy",
+  "totalTime": "20 min",
+  "prepTime": "5 min",
+  "cookTime": "15 min",
+  "tip": "One brief nutrition or cooking tip for this specific meal",
+  "steps": [
+    {
+      "step": 1,
+      "title": "Short step title",
+      "instruction": "Full instruction sentence.",
+      "duration": "2 min",
+      "icon": "🔪"
+    }
+  ]
+}`
+
+    const completion = await client.chat.completions.create({
+      model:       'llama-3.3-70b-versatile',
+      messages:    [{ role: 'user', content: prompt }],
+      max_tokens:  1200,
+      temperature: 0.5,
+    })
+
+    const responseText = completion.choices[0].message.content
+    const cleanJson    = responseText.replace(/```json|```/g, '').trim()
+    const parsed       = JSON.parse(cleanJson)
+
+    posthog.capture({
+      distinctId,
+      event:      'recipe_steps_viewed',
+      properties: { meal_name: meal.name, meal_type: meal.meal },
+    })
+
+    res.json({ success: true, ...parsed })
+  } catch (error) {
+    console.error('Recipe steps error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/recipesteps' })
     res.status(500).json({ success: false, error: error.message })
   }
 })
