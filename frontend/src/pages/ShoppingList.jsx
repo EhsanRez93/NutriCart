@@ -50,15 +50,114 @@ function estimateItemPrice(itemName) {
   return 1.00
 }
 
+function toCanonicalUnit(unit = '') {
+  const u = String(unit).toLowerCase().trim()
+  if (u === 'pc' || u === 'x') return 'pcs'
+  return u || 'pcs'
+}
+
+function parseIngredientAmount(raw = '') {
+  const text = String(raw).toLowerCase()
+  const match = text.match(/(\d+(?:\.\d+)?)\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/)
+  if (match) {
+    return { qty: parseFloat(match[1]), unit: toCanonicalUnit(match[2]) }
+  }
+  const fraction = text.match(/(\d+)\s*\/\s*(\d+)/)
+  if (fraction) {
+    const num = Number(fraction[1])
+    const den = Number(fraction[2])
+    if (Number.isFinite(num) && Number.isFinite(den) && den !== 0) {
+      return { qty: +(num / den).toFixed(3), unit: 'pcs' }
+    }
+  }
+  const numOnly = text.match(/(\d+(?:\.\d+)?)/)
+  if (numOnly) return { qty: parseFloat(numOnly[1]), unit: 'pcs' }
+  return { qty: 1, unit: 'pcs' }
+}
+
+function normalizeIngredientName(raw = '') {
+  return String(raw)
+    .toLowerCase()
+    .replace(/\b\d+(?:\.\d+)?\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/g, ' ')
+    .replace(/\b\d+\s*\/\s*\d+\b/g, ' ')
+    .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function toTitleCase(text = '') {
+  return String(text)
+    .split(' ')
+    .filter(Boolean)
+    .map(w => w[0].toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
+function convertQty(qty, fromUnit, toUnit) {
+  const from = toCanonicalUnit(fromUnit)
+  const to = toCanonicalUnit(toUnit)
+  if (!Number.isFinite(qty)) return null
+  if (from === to) return qty
+
+  if (from === 'kg' && to === 'g') return qty * 1000
+  if (from === 'g' && to === 'kg') return qty / 1000
+  if (from === 'l' && to === 'ml') return qty * 1000
+  if (from === 'ml' && to === 'l') return qty / 1000
+
+  const volumeToMl = { ml: 1, l: 1000, tsp: 5, tbsp: 15, cup: 240 }
+  if (volumeToMl[from] && volumeToMl[to]) {
+    return (qty * volumeToMl[from]) / volumeToMl[to]
+  }
+
+  if ((from === 'pack' && to === 'pcs') || (from === 'pcs' && to === 'pack')) return qty
+  return null
+}
+
+function formatAmount(qty, unit) {
+  if (!Number.isFinite(qty)) return ''
+  let amount = qty
+  let u = toCanonicalUnit(unit)
+  if (u === 'g' && amount >= 1000) { amount /= 1000; u = 'kg' }
+  if (u === 'ml' && amount >= 1000) { amount /= 1000; u = 'l' }
+  const rounded = +amount.toFixed(amount >= 10 ? 1 : 2)
+  return `${rounded}${u}`
+}
+
 function extractIngredients(aiMealPlan, staticDayPlan) {
   const allItems = {}
   const source = aiMealPlan ? aiMealPlan.days.flatMap(d => d.meals.flatMap(m => m.items || [])) : staticDayPlan.flatMap(m => m.items || [])
-  source.forEach(item => {
-    const key = item.toLowerCase().trim()
+  source.forEach(rawItem => {
+    const normalizedName = normalizeIngredientName(rawItem)
+    if (!normalizedName) return
+    const key = normalizedName
+    const parsed = parseIngredientAmount(rawItem)
     if (!allItems[key]) {
-      allItems[key] = { name: item, category: categorizeItem(item), checked: false, selected: false, count: 1, basePrice: estimateItemPrice(item) }
+      const unit = toCanonicalUnit(parsed.unit)
+      allItems[key] = {
+        key,
+        name: toTitleCase(normalizedName),
+        baseName: normalizedName,
+        category: categorizeItem(normalizedName),
+        checked: false,
+        selected: false,
+        count: 1,
+        totalQty: parsed.qty,
+        totalUnit: unit,
+        amountLabel: formatAmount(parsed.qty, unit),
+        basePrice: estimateItemPrice(normalizedName),
+      }
+      return
+    }
+
+    allItems[key].count += 1
+    const converted = convertQty(parsed.qty, parsed.unit, allItems[key].totalUnit)
+    if (Number.isFinite(converted)) {
+      allItems[key].totalQty = +(allItems[key].totalQty + converted).toFixed(3)
+      allItems[key].amountLabel = formatAmount(allItems[key].totalQty, allItems[key].totalUnit)
     } else {
-      allItems[key].count += 1
+      // Incompatible units: keep current summed quantity, still dedup by name.
+      allItems[key].amountLabel = formatAmount(allItems[key].totalQty, allItems[key].totalUnit)
     }
   })
   return allItems
@@ -84,7 +183,7 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
 
   // ── Fetch real prices whenever items list or store changes ──
   useEffect(() => {
-    const itemNames = Object.values(rawItems).map(i => i.name)
+    const itemNames = Object.values(rawItems).map(i => i.baseName || i.name)
     if (itemNames.length === 0) return
     setPricesLoading(true)
     fetch(`${API}/api/prices`, {
@@ -100,7 +199,8 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
           setItems(prev => {
             const updated = {}
             Object.entries(prev).forEach(([k, v]) => {
-              updated[k] = { ...v, basePrice: priceMap[v.name.toLowerCase().trim()] ?? v.basePrice }
+              const lookup = (v.baseName || v.name).toLowerCase().trim()
+              updated[k] = { ...v, basePrice: priceMap[lookup] ?? v.basePrice }
             })
             return updated
           })
@@ -298,7 +398,7 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
           </div>
           <div className="divide-y divide-gray-50">
             {grouped[category].map((item, i) => {
-              const key   = item.name.toLowerCase().trim()
+              const key   = item.key || item.name.toLowerCase().trim()
               const price = getItemPrice(item, activeStore)
               return (
                 <div key={i} className={`flex items-center gap-3 px-5 py-3 transition ${item.checked ? 'opacity-50' : 'hover:bg-gray-50'}`}>
@@ -320,13 +420,14 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
 
                   <span className={`text-sm flex-1 ${item.checked ? 'line-through text-gray-400' : 'text-gray-700'}`}>
                     {item.name}
+                    {item.amountLabel && <span className="ml-1 text-xs text-gray-500 font-semibold">({item.amountLabel})</span>}
                   </span>
                   {item.count > 1 && <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{item.count}x week</span>}
                   <span className="text-xs text-gray-500">€{price}</span>
                   <span className="text-xs text-green-600 font-semibold">{activeStore}</span>
                   {onShowPriceHistory && (
                     <button
-                      onClick={() => onShowPriceHistory(item.name)}
+                      onClick={() => onShowPriceHistory(item.baseName || item.name)}
                       className="text-xs text-blue-500 hover:text-blue-700 transition font-semibold ml-1"
                       title="View price history">
                       📈
@@ -358,9 +459,9 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, 
               if (!onAddPurchasedToPantry) return
               onAddPurchasedToPantry(
                 pantryTransferItems.map(i => ({
-                  name: i.name,
+                    name: `${(i.baseName || i.name).toLowerCase()} ${i.amountLabel || ''}`.trim(),
                   category: i.category,
-                  count: i.count || 1,
+                    count: 1,
                 }))
               )
               posthog.capture('shopping_items_sent_to_pantry', {
