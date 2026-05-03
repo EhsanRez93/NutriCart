@@ -535,6 +535,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [cookNowLoading, setCookNowLoading] = useState(false)
   const [cookNowRecipe, setCookNowRecipe]   = useState(null) // recipe object | null
   const [cookNowError, setCookNowError]     = useState(null)
+  const [cookNowUsed, setCookNowUsed]       = useState(false) // true after pantry deducted
 
   // ── Update clock ──
   useEffect(() => {
@@ -1227,6 +1228,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setCookNowLoading(true)
     setCookNowError(null)
     setCookNowRecipe(null)
+    setCookNowUsed(false)
     try {
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/cook-now', {
         method: 'POST',
@@ -1247,6 +1249,36 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       setCookNowError('Network error — please try again.')
     }
     setCookNowLoading(false)
+  }
+
+  // Deduct pantry quantities after cooking a Cook Now recipe
+  async function markCookNowCooked() {
+    if (!cookNowRecipe || cookNowUsed) return
+    const usedIngredients = cookNowRecipe.usedIngredients || []
+    // Treat each ingredient string the same way getMealPantryRequirements does
+    const fakeMeal = { items: usedIngredients }
+    const requirements = getMealPantryRequirements(fakeMeal)
+    for (const req of requirements) {
+      const item = pantryItems.find(p => p.id === req.id)
+      if (!item) continue
+      const available = Number(item.quantity)
+      if (!Number.isFinite(available)) continue
+      const nextQty = Math.max(0, +(available - req.neededQty).toFixed(3))
+      await updatePantryItem(req.id, { quantity: nextQty })
+
+      const initial = Number(initialPantryQtyById[item.id])
+      if (Number.isFinite(initial) && initial > 0) {
+        const threshold = initial * 0.2
+        if (available > threshold && nextQty <= threshold && nextQty > 0) {
+          pushStockWarning({ key: `low:${item.id}`, type: 'low', itemName: item.name, qtyLeft: nextQty, unit: item.unit || '', time: Date.now() })
+        }
+        if (nextQty <= 0) {
+          pushStockWarning({ key: `out:${item.id}`, type: 'out', itemName: item.name, qtyLeft: 0, unit: item.unit || '', time: Date.now() })
+        }
+      }
+    }
+    setCookNowUsed(true)
+    posthog.capture('cook_now_pantry_deducted', { recipe: cookNowRecipe.name, items_deducted: requirements.length })
   }
 
   // ── v17.0: Scale meal ingredients for meal prep (2x, 3x, etc) ──
@@ -2333,11 +2365,24 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                         ))}
                       </div>
                     )}
-                    <button
-                      onClick={cookNow}
-                      className="mt-4 w-full border-2 border-orange-300 text-orange-700 font-bold py-2 rounded-xl text-sm hover:bg-orange-50 transition">
-                      🔄 Generate another idea
-                    </button>
+                    <div className="mt-4 flex flex-col gap-2">
+                      {!cookNowUsed ? (
+                        <button
+                          onClick={markCookNowCooked}
+                          className="w-full bg-green-600 text-white font-bold py-2.5 rounded-xl text-sm hover:bg-green-700 transition flex items-center justify-center gap-2">
+                          ✅ I cooked this — deduct ingredients from pantry
+                        </button>
+                      ) : (
+                        <div className="w-full bg-green-50 border border-green-300 text-green-700 font-bold py-2.5 rounded-xl text-sm text-center">
+                          ✅ Pantry updated!
+                        </div>
+                      )}
+                      <button
+                        onClick={cookNow}
+                        className="w-full border-2 border-orange-300 text-orange-700 font-bold py-2 rounded-xl text-sm hover:bg-orange-50 transition">
+                        🔄 Generate another idea
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
