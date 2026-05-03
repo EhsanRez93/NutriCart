@@ -525,6 +525,16 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
   const [priceStats, setPriceStats] = useState(null)
   const [priceLoading, setPriceLoading] = useState(false)
 
+  // ── v18.0 Mood → Meal nudge ──
+  const [moodNudge, setMoodNudge] = useState(null) // null | 'low_energy' | 'low_mood'
+  const [moodNudgeDismissed, setMoodNudgeDismissed] = useState(false)
+  const [moodNudgeLoading, setMoodNudgeLoading] = useState(false)
+
+  // ── v18.0 Cook Now (instant pantry recipe) ──
+  const [cookNowLoading, setCookNowLoading] = useState(false)
+  const [cookNowRecipe, setCookNowRecipe]   = useState(null) // recipe object | null
+  const [cookNowError, setCookNowError]     = useState(null)
+
   // ── Update clock ──
   useEffect(() => {
     const t = setInterval(() => setCurrentTime(new Date()), 60000)
@@ -1041,6 +1051,10 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         return [...without, data].sort((a, b) => a.checkin_date.localeCompare(b.checkin_date))
       })
     }
+    // ── v18.0 Mood nudge: show banner when energy or mood ≤ 2 ──
+    if ((field === 'energy' || field === 'mood') && value <= 2 && !moodNudgeDismissed) {
+      setMoodNudge(field === 'energy' ? 'low_energy' : 'low_mood')
+    }
     posthog.capture('daily_checkin_submitted', { field, value })
     setCheckinSaving(false)
   }
@@ -1171,6 +1185,67 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     } finally {
       setPantryReplanLoading(false)
     }
+  }
+
+  // ── v18.0: Swap today's meals to comfort food when mood/energy is low ──
+  async function swapTodayToComfort() {
+    if (!aiMealPlan || !startDate) return
+    setMoodNudgeLoading(true)
+    try {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/replan-with-pantry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+        body: JSON.stringify({
+          profile: { ...profile, pantry: pantryItems, moodOverride: 'comfort' },
+          currentPlan: aiMealPlan,
+          pantryItems: pantryItems,
+          pantryMode: 'mixed',
+          planScope: 'today',
+          todayDate: getTodayStr(),
+          comfortMode: true,
+        }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setAiMealPlan(data.mealPlan)
+        await onSaveMealPlan(data.mealPlan, startDate)
+        posthog.capture('comfort_swap_used', { reason: moodNudge })
+      }
+    } catch (_) {}
+    setMoodNudgeLoading(false)
+    setMoodNudge(null)
+    setMoodNudgeDismissed(true)
+  }
+
+  // ── v18.0: Cook Now — instant recipe from pantry ──
+  async function cookNow() {
+    if (pantryItems.length === 0) return
+    setCookNowLoading(true)
+    setCookNowError(null)
+    setCookNowRecipe(null)
+    try {
+      const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/cook-now', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-POSTHOG-DISTINCT-ID': posthog.get_distinct_id(),
+        },
+        body: JSON.stringify({ pantryItems, profile, userId }),
+      })
+      const data = await response.json()
+      if (data.success) {
+        setCookNowRecipe(data.recipe)
+        posthog.capture('cook_now_recipe_received', { recipe: data.recipe?.name })
+      } else {
+        setCookNowError(data.error || 'Could not generate a recipe right now.')
+      }
+    } catch (_) {
+      setCookNowError('Network error — please try again.')
+    }
+    setCookNowLoading(false)
   }
 
   // ── v17.0: Scale meal ingredients for meal prep (2x, 3x, etc) ──
@@ -1482,6 +1557,40 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <p className="text-xs text-gray-400">1 = poor · 5 = excellent. Builds your insights over time.</p>
               </div>
             </div>
+
+            {/* v18.0 Mood nudge banner */}
+            {moodNudge && !moodNudgeDismissed && aiMealPlan && (
+              <div className="mb-6 rounded-2xl border-2 border-pink-300 bg-gradient-to-r from-pink-50 to-orange-50 px-5 py-4">
+                <div className="flex items-start gap-3">
+                  <span className="text-3xl flex-shrink-0">{moodNudge === 'low_energy' ? '😴' : '💙'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-pink-900 text-sm">
+                      {moodNudge === 'low_energy'
+                        ? 'Feeling low on energy today?'
+                        : 'Not feeling your best today?'}
+                    </p>
+                    <p className="text-pink-700 text-xs mt-0.5">
+                      {moodNudge === 'low_energy'
+                        ? "Let NutriCart swap today's meals for easy, energising comfort food — light, warming, and quick to make."
+                        : "Let NutriCart swap today's meals for comforting food that soothes the soul. You deserve it."}
+                    </p>
+                    <div className="flex gap-2 mt-3 flex-wrap">
+                      <button
+                        onClick={swapTodayToComfort}
+                        disabled={moodNudgeLoading}
+                        className="text-xs font-bold px-4 py-2 rounded-full bg-pink-600 text-white hover:bg-pink-700 transition disabled:opacity-50">
+                        {moodNudgeLoading ? '⏳ Swapping…' : '🍲 Yes, swap today\'s meals'}
+                      </button>
+                      <button
+                        onClick={() => { setMoodNudge(null); setMoodNudgeDismissed(true) }}
+                        className="text-xs font-bold px-4 py-2 rounded-full border border-pink-300 text-pink-600 hover:bg-pink-50 transition">
+                        No thanks
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Upcoming holidays card */}
             {upcomingHols.length > 0 && (
@@ -2136,6 +2245,98 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                 <p className="text-3xl font-extrabold text-purple-700">{pantryItems.length}</p>
               </div>
             </div>
+
+            {/* v18.0 Cook Now — instant recipe */}
+            {pantryItems.length > 0 && (
+              <div className="mb-6 rounded-2xl border-2 border-orange-300 bg-gradient-to-r from-orange-50 to-yellow-50 px-5 py-4">
+                <div className="flex items-center justify-between flex-wrap gap-3 mb-1">
+                  <div>
+                    <p className="font-extrabold text-orange-900 text-base">🍳 Cook with what I have RIGHT NOW</p>
+                    <p className="text-orange-700 text-xs mt-0.5">AI instantly creates a recipe using your current pantry — no planning needed.</p>
+                  </div>
+                  <button
+                    onClick={cookNow}
+                    disabled={cookNowLoading}
+                    className="flex-shrink-0 bg-orange-500 text-white font-bold px-5 py-2.5 rounded-full text-sm hover:bg-orange-600 transition disabled:opacity-50 shadow-md">
+                    {cookNowLoading ? '⏳ Creating…' : '⚡ Cook Now'}
+                  </button>
+                </div>
+                {cookNowError && <p className="text-red-600 text-xs mt-2">❌ {cookNowError}</p>}
+                {cookNowRecipe && (
+                  <div className="mt-4 bg-white rounded-2xl p-4 shadow-sm border border-orange-200">
+                    <div className="flex items-start justify-between flex-wrap gap-2 mb-3">
+                      <div>
+                        <p className="font-extrabold text-gray-800 text-base">{cookNowRecipe.name}</p>
+                        <div className="flex flex-wrap gap-2 mt-1 text-xs">
+                          <span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full font-bold capitalize">{cookNowRecipe.mealType}</span>
+                          <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">⏱ {cookNowRecipe.readyIn}</span>
+                          <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">👤 {cookNowRecipe.difficulty}</span>
+                          <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">{cookNowRecipe.calories} kcal</span>
+                        </div>
+                      </div>
+                      <button onClick={() => setCookNowRecipe(null)} className="text-gray-400 hover:text-gray-600 text-xl font-bold leading-none">×</button>
+                    </div>
+                    <div className="flex gap-3 text-center mb-4">
+                      {[
+                        { label: 'Protein', value: cookNowRecipe.protein, unit: 'g', color: 'text-blue-700' },
+                        { label: 'Carbs',   value: cookNowRecipe.carbs,   unit: 'g', color: 'text-yellow-700' },
+                        { label: 'Fats',    value: cookNowRecipe.fats,    unit: 'g', color: 'text-orange-700' },
+                      ].map((n, i) => (
+                        <div key={i} className="flex-1 bg-gray-50 rounded-xl py-2">
+                          <p className={`text-sm font-extrabold ${n.color}`}>{n.value}<span className="text-xs font-normal text-gray-400">{n.unit}</span></p>
+                          <p className="text-xs text-gray-400">{n.label}</p>
+                        </div>
+                      ))}
+                    </div>
+                    {cookNowRecipe.usedIngredients?.length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-xs font-bold text-gray-500 mb-1.5">✅ Using from your pantry</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {cookNowRecipe.usedIngredients.map((ing, i) => (
+                            <span key={i} className="text-xs bg-green-50 border border-green-200 text-green-700 px-2 py-1 rounded-lg">{ing}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {cookNowRecipe.missingIngredients?.length > 0 && (
+                      <div className="mb-3">
+                        <p className="text-xs font-bold text-gray-500 mb-1.5">🛒 You may also need</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {cookNowRecipe.missingIngredients.map((ing, i) => (
+                            <span key={i} className="text-xs bg-amber-50 border border-amber-200 text-amber-700 px-2 py-1 rounded-lg">{ing}</span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {cookNowRecipe.tip && (
+                      <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-3 text-xs text-amber-800">
+                        💡 {cookNowRecipe.tip}
+                      </div>
+                    )}
+                    {cookNowRecipe.steps?.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-bold text-gray-500 mb-1">📋 Steps</p>
+                        {cookNowRecipe.steps.map((s, i) => (
+                          <div key={i} className="flex items-start gap-2 bg-gray-50 rounded-xl px-3 py-2">
+                            <span className="w-6 h-6 rounded-full bg-orange-100 text-orange-700 text-xs font-bold flex items-center justify-center flex-shrink-0">{s.step}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="font-bold text-xs text-gray-700">{s.icon} {s.title}</p>
+                              <p className="text-xs text-gray-500 mt-0.5">{s.instruction}</p>
+                            </div>
+                            <span className="text-xs text-gray-400 flex-shrink-0">{s.duration}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      onClick={cookNow}
+                      className="mt-4 w-full border-2 border-orange-300 text-orange-700 font-bold py-2 rounded-xl text-sm hover:bg-orange-50 transition">
+                      🔄 Generate another idea
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* What you have summary */}
             {pantryItems.length > 0 && (

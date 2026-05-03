@@ -1280,6 +1280,72 @@ app.post('/api/price-prediction', async (req, res) => {
   }
 })
 
+// ── v18.0: Cook Now — instant recipe from current pantry items ────────────
+app.post('/api/cook-now', async (req, res) => {
+  const { pantryItems = [], profile = {}, userId } = req.body
+  const distinctId = userId || req.headers['x-posthog-distinct-id'] || 'anonymous'
+  try {
+    if (pantryItems.length === 0) {
+      return res.status(400).json({ success: false, error: 'No pantry items provided.' })
+    }
+    const client = getGroqClient()
+
+    const pantryList = pantryItems
+      .map(p => `${p.name}${p.quantity ? ` (${p.quantity}${p.unit || ''})` : ''}`)
+      .join(', ')
+
+    const systemPrompt = `You are a creative chef AI. The user has opened their fridge/pantry and wants to cook something RIGHT NOW with only what they have. Generate ONE realistic, satisfying recipe using only (or mostly) the listed ingredients. No grocery shopping allowed.
+
+Return ONLY valid JSON matching this schema:
+{
+  "name": "Recipe name",
+  "mealType": "breakfast|lunch|dinner|snack",
+  "readyIn": "20 minutes",
+  "difficulty": "Easy|Medium|Hard",
+  "servings": 1,
+  "calories": 450,
+  "protein": 30,
+  "carbs": 40,
+  "fats": 15,
+  "usedIngredients": ["ingredient1", "ingredient2"],
+  "missingIngredients": ["salt", "pepper"],
+  "steps": [
+    { "step": 1, "icon": "🔪", "title": "Chop the onion", "instruction": "Dice one small onion finely.", "duration": "2 min" },
+    { "step": 2, "icon": "🔥", "title": "Heat the pan", "instruction": "Warm olive oil over medium heat for 1 minute.", "duration": "1 min" }
+  ],
+  "tip": "Optional short cooking tip"
+}`
+
+    const userPrompt = `My pantry/fridge contains: ${pantryList}
+${profile.goal ? `My goal: ${profile.goal}` : ''}
+${profile.calories ? `My daily calorie target: ${profile.calories} kcal` : ''}
+
+Please give me ONE recipe I can cook right now.`
+
+    const completion = await client.chat.completions.create({
+      model:       'llama-3.3-70b-versatile',
+      temperature: 0.8,
+      max_tokens:  1200,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user',   content: userPrompt },
+      ],
+    })
+
+    const raw  = completion.choices[0]?.message?.content || ''
+    const json = raw.match(/\{[\s\S]*\}/)
+    if (!json) throw new Error('No JSON in response')
+    const recipe = JSON.parse(json[0])
+
+    posthog.capture({ distinctId, event: 'cook_now_used', properties: { pantry_items: pantryItems.length } })
+    res.json({ success: true, recipe })
+  } catch (error) {
+    console.error('cook-now error:', error.message)
+    posthog.captureException(error, distinctId, { route: '/api/cook-now' })
+    res.status(500).json({ success: false, error: error.message })
+  }
+})
+
 // ── Start Server ─────────────────────────────────────
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {

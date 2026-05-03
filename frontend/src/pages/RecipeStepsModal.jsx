@@ -1,11 +1,107 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
 const API = 'https://nutricart-production-cd53.up.railway.app'
+
+// Keywords that mean "wait while this cooks / rests" — timer worthy
+const WAIT_KEYWORDS = /simmer|boil|bake|roast|steam|fry|sauté|sear|grill|marinate|rest|reduce|broil|poach|blanch|caramelise|caramelize|slow.?cook/i
+
+// Parse the first time mention from a string: "10 minutes", "8 min", "1 hour 30 min", etc.
+function parseWaitSeconds(text) {
+  let total = 0
+  const hours   = text.match(/(\d+)\s*h(our|r)?s?/i)
+  const minutes = text.match(/(\d+)\s*m(in|inute)?s?/i)
+  if (hours)   total += parseInt(hours[1]) * 3600
+  if (minutes) total += parseInt(minutes[1]) * 60
+  return total > 0 ? total : null
+}
+
+function isWaitStep(step) {
+  const combined = `${step.title || ''} ${step.instruction || ''}`
+  return WAIT_KEYWORDS.test(combined) && parseWaitSeconds(combined) !== null
+}
 
 const DIFFICULTY_COLORS = {
   Easy:   { bg: 'bg-green-100',  text: 'text-green-700',  border: 'border-green-300' },
   Medium: { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-300' },
   Hard:   { bg: 'bg-red-100',    text: 'text-red-700',    border: 'border-red-300' },
+}
+
+// ── Step Timer component ──────────────────────────────────────────────────
+function StepTimer({ seconds: initialSeconds, onDone }) {
+  const [remaining, setRemaining] = useState(null) // null = not started
+  const [running, setRunning]     = useState(false)
+  const intervalRef               = useRef(null)
+
+  useEffect(() => {
+    if (!running) return
+    intervalRef.current = setInterval(() => {
+      setRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(intervalRef.current)
+          setRunning(false)
+          // Vibrate if supported
+          if (navigator.vibrate) navigator.vibrate([300, 100, 300])
+          // Play a simple beep via Web Audio
+          try {
+            const ctx = new (window.AudioContext || window.webkitAudioContext)()
+            ;[0, 0.3, 0.6].forEach(t => {
+              const osc  = ctx.createOscillator()
+              const gain = ctx.createGain()
+              osc.connect(gain); gain.connect(ctx.destination)
+              osc.frequency.value = 880
+              gain.gain.setValueAtTime(0.3, ctx.currentTime + t)
+              gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.25)
+              osc.start(ctx.currentTime + t)
+              osc.stop(ctx.currentTime + t + 0.25)
+            })
+          } catch (_) {}
+          onDone?.()
+          return 0
+        }
+        return prev - 1
+      })
+    }, 1000)
+    return () => clearInterval(intervalRef.current)
+  }, [running])
+
+  function fmt(s) {
+    const m = Math.floor(s / 60).toString().padStart(2, '0')
+    const sec = (s % 60).toString().padStart(2, '0')
+    return `${m}:${sec}`
+  }
+
+  function start() { setRemaining(initialSeconds); setRunning(true) }
+  function pause() { setRunning(false) }
+  function resume() { setRunning(true) }
+  function reset() { clearInterval(intervalRef.current); setRunning(false); setRemaining(null) }
+
+  if (remaining === null) {
+    return (
+      <button onClick={start}
+        className="inline-flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-full bg-orange-100 text-orange-700 border border-orange-300 hover:bg-orange-200 transition mt-1.5">
+        ⏱ Start timer ({fmt(initialSeconds)})
+      </button>
+    )
+  }
+
+  const done = remaining === 0
+  return (
+    <div className={`inline-flex items-center gap-2 mt-1.5 px-3 py-1.5 rounded-full border text-xs font-bold
+      ${done ? 'bg-green-100 border-green-400 text-green-700' : 'bg-orange-50 border-orange-300 text-orange-700'}`}>
+      {done ? (
+        <>✅ Done! <button onClick={reset} className="underline text-orange-600 ml-1">Reset</button></>
+      ) : (
+        <>
+          <span className="tabular-nums text-sm">{fmt(remaining)}</span>
+          {running
+            ? <button onClick={pause}  className="hover:text-orange-900">⏸</button>
+            : <button onClick={resume} className="hover:text-orange-900">▶</button>
+          }
+          <button onClick={reset} className="hover:text-red-600">↺</button>
+        </>
+      )}
+    </div>
+  )
 }
 
 export default function RecipeStepsModal({ meal, userId, onClose }) {
@@ -161,13 +257,21 @@ export default function RecipeStepsModal({ meal, userId, onClose }) {
                           ${done ? 'bg-green-500 text-white' : current ? 'bg-green-600 text-white' : 'bg-gray-100 text-gray-500'}`}>
                           {done ? '✓' : s.step}
                         </div>
-                        <div className="flex-1 min-w-0">
+                      <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                             <span className="text-base">{s.icon || '🍳'}</span>
                             <span className={`font-bold text-sm ${done ? 'line-through text-gray-400' : 'text-gray-800'}`}>{s.title}</span>
                             <span className="ml-auto text-xs text-gray-400 flex-shrink-0">⏱ {s.duration}</span>
                           </div>
                           <p className={`text-sm leading-relaxed ${done ? 'text-gray-400 line-through' : 'text-gray-600'}`}>{s.instruction}</p>
+                          {!done && isWaitStep(s) && (() => {
+                            const secs = parseWaitSeconds(`${s.title} ${s.instruction}`)
+                            return secs ? (
+                              <div onClick={e => e.stopPropagation()}>
+                                <StepTimer key={i} seconds={secs} onDone={() => toggleStep(i)} />
+                              </div>
+                            ) : null
+                          })()}
                         </div>
                       </div>
                     </div>
