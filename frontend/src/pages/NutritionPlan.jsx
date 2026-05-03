@@ -1257,6 +1257,49 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     })
   }
 
+  async function fileToOptimizedDataUrl(file) {
+    // Camera photos can be very large and crash low-memory mobile tabs.
+    // Downscale + compress before sending to backend OCR.
+    const maxSide = 1600
+    const quality = 0.82
+
+    try {
+      const objectUrl = URL.createObjectURL(file)
+      const img = await new Promise((resolve, reject) => {
+        const image = new Image()
+        image.onload = () => resolve(image)
+        image.onerror = () => reject(new Error('Could not decode image'))
+        image.src = objectUrl
+      })
+
+      const w = img.naturalWidth || img.width
+      const h = img.naturalHeight || img.height
+      if (!w || !h) {
+        URL.revokeObjectURL(objectUrl)
+        return readFileAsDataUrl(file)
+      }
+
+      const scale = Math.min(1, maxSide / Math.max(w, h))
+      const targetW = Math.max(1, Math.round(w * scale))
+      const targetH = Math.max(1, Math.round(h * scale))
+
+      const canvas = document.createElement('canvas')
+      canvas.width = targetW
+      canvas.height = targetH
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(objectUrl)
+        return readFileAsDataUrl(file)
+      }
+      ctx.drawImage(img, 0, 0, targetW, targetH)
+      const dataUrl = canvas.toDataURL('image/jpeg', quality)
+      URL.revokeObjectURL(objectUrl)
+      return dataUrl
+    } catch {
+      return readFileAsDataUrl(file)
+    }
+  }
+
   async function parseReceiptImage(file) {
     if (!file) return
     if (!file.type?.startsWith('image/')) {
@@ -1267,7 +1310,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     setReceiptOcrError(null)
     setReceiptOcrItems([])
     try {
-      const imageDataUrl = await readFileAsDataUrl(file)
+      const imageDataUrl = await fileToOptimizedDataUrl(file)
       const response = await fetch('https://nutricart-production-cd53.up.railway.app/api/receipt-ocr', {
         method: 'POST',
         headers: {
@@ -1276,7 +1319,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         },
         body: JSON.stringify({ imageDataUrl, storeHint: profile.store?.[0] || profile.store || 'Lidl' }),
       })
-      const data = await response.json()
+      const data = await response.json().catch(() => ({ success: false, error: `OCR failed (${response.status})` }))
       if (!data.success) throw new Error(data.error || 'Could not parse receipt')
       const parsedItems = Array.isArray(data.items) ? data.items : []
       if (parsedItems.length === 0) {
