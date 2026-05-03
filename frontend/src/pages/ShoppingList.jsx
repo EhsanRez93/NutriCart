@@ -71,7 +71,7 @@ const staticDayPlan = [
   { meal: 'Dinner',    items: ['Salmon fillet 200g', 'Sweet potato 200g', 'Broccoli 150g', 'Lemon 1/2'] },
 ]
 
-export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory }) {
+export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory, onAddPurchasedToPantry }) {
   const rawItems      = extractIngredients(aiMealPlan, staticDayPlan)
   const [items, setItems]           = useState(rawItems)
   const [mode, setMode]             = useState('manual') // 'manual' | 'ai'
@@ -112,7 +112,9 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory }
   const itemList   = Object.values(items)
   const totalItems = itemList.length
   const checkedItems  = itemList.filter(i => i.checked).length
+  const checkedList = itemList.filter(i => i.checked)
   const selectedItems = itemList.filter(i => i.selected)
+  const pantryTransferItems = checkedList.length > 0 ? checkedList : selectedItems
   const progress   = Math.round((checkedItems / totalItems) * 100)
 
   // Group by category
@@ -337,19 +339,44 @@ export default function ShoppingList({ profile, aiMealPlan, onShowPriceHistory }
         </div>
       ))}
 
-      {/* Order button */}
+      {/* Order / in-person actions */}
       <div className="mt-6 bg-gray-800 rounded-2xl p-5 text-center">
         <p className="text-white font-bold mb-2">Ready to order?</p>
-        <p className="text-gray-400 text-sm mb-4">Open {activeStore} online shop and add your items</p>
-        <button
-          onClick={() => {
-            posthog.capture('store_online_shop_opened', { store: activeStore, checked_items: checkedItems, total_items: totalItems })
-            const urls = { 'Lidl': 'https://www.lidl.sk', 'Kaufland': 'https://www.kaufland.sk', 'Billa': 'https://www.billa.sk', 'Tesco': 'https://www.tesco.com', 'Spar': 'https://www.spar.sk', 'Aldi': 'https://www.aldi.sk', 'Penny': 'https://www.penny.sk' }
-            window.open(urls[activeStore] || `https://www.google.com/search?q=${activeStore}+online+shop`, '_blank')
-          }}
-          className="bg-green-500 text-white font-bold px-8 py-3 rounded-full hover:bg-green-400 transition">
-          🛒 Go to {activeStore} Online Shop →
-        </button>
+        <p className="text-gray-400 text-sm mb-4">Order online or sync your bought items directly to pantry</p>
+        <div className="flex flex-col sm:flex-row gap-2 justify-center">
+          <button
+            onClick={() => {
+              posthog.capture('store_online_shop_opened', { store: activeStore, checked_items: checkedItems, total_items: totalItems })
+              const urls = { 'Lidl': 'https://www.lidl.sk', 'Kaufland': 'https://www.kaufland.sk', 'Billa': 'https://www.billa.sk', 'Tesco': 'https://www.tesco.com', 'Spar': 'https://www.spar.sk', 'Aldi': 'https://www.aldi.sk', 'Penny': 'https://www.penny.sk' }
+              window.open(urls[activeStore] || `https://www.google.com/search?q=${activeStore}+online+shop`, '_blank')
+            }}
+            className="bg-green-500 text-white font-bold px-5 py-3 rounded-full hover:bg-green-400 transition">
+            🛒 Go to {activeStore} Online Shop →
+          </button>
+          <button
+            onClick={() => {
+              if (!onAddPurchasedToPantry) return
+              onAddPurchasedToPantry(
+                pantryTransferItems.map(i => ({
+                  name: i.name,
+                  category: i.category,
+                  count: i.count || 1,
+                }))
+              )
+              posthog.capture('shopping_items_sent_to_pantry', {
+                source_store: activeStore,
+                sent_items: pantryTransferItems.length,
+                source_mode: checkedList.length > 0 ? 'checked' : 'selected',
+              })
+            }}
+            disabled={!onAddPurchasedToPantry || pantryTransferItems.length === 0}
+            className="bg-blue-500 text-white font-bold px-5 py-3 rounded-full hover:bg-blue-400 transition disabled:opacity-40 disabled:cursor-not-allowed">
+            🧺 Stock Pantry from Bought Items
+          </button>
+        </div>
+        <p className="text-gray-500 text-xs mt-2">
+          Uses checked items first{checkedList.length === 0 ? ' (no checked items found, selected items will be used)' : ''}.
+        </p>
       </div>
 
       {/* Price Comparison Modal */}

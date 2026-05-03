@@ -1153,6 +1153,86 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     }
   }
 
+  function mapShoppingCategoryToPantry(category = '') {
+    const c = String(category).toLowerCase()
+    if (c.includes('meat') || c.includes('fish')) return 'freezer'
+    if (c.includes('dairy') || c.includes('vegetables') || c.includes('fruits')) return 'fridge'
+    if (c.includes('condiments') || c.includes('spices')) return 'spices'
+    return 'pantry'
+  }
+
+  function stripAmountFromItemName(raw = '') {
+    const cleaned = String(raw)
+      .toLowerCase()
+      .replace(/\b\d+(?:\.\d+)?\s*(kg|g|l|ml|pcs|pc|x|tbsp|tsp|cup|pack)\b/g, ' ')
+      .replace(/\b\d+(?:\.\d+)?\b/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+    return cleaned || normalizeItemText(raw) || 'item'
+  }
+
+  async function addBoughtItemsToPantry(boughtItems = []) {
+    if (!userId || !Array.isArray(boughtItems) || boughtItems.length === 0) return
+    setPantryLoading(true)
+    let added = 0
+    let updated = 0
+    const localPantry = [...pantryItems]
+
+    for (const b of boughtItems) {
+      const parsed = parseItemAmount(b.name || '')
+      const multiplier = Math.max(1, Number(b.count) || 1)
+      const qtyToAdd = +(parsed.qty * multiplier).toFixed(3)
+      const unit = toCanonicalUnit(parsed.unit || 'pcs')
+      const name = stripAmountFromItemName(b.name || '')
+      const category = mapShoppingCategoryToPantry(b.category)
+
+      const existing = localPantry.find(p => {
+        return normalizeItemText(p.name) === normalizeItemText(name)
+          && toCanonicalUnit(p.unit || unit) === unit
+      })
+
+      if (existing) {
+        const current = Number(existing.quantity)
+        const nextQty = +((Number.isFinite(current) ? current : 0) + qtyToAdd).toFixed(3)
+        await updatePantryItem(existing.id, {
+          quantity: nextQty,
+          category: existing.category || category,
+          unit: existing.unit || unit,
+        })
+        existing.quantity = nextQty
+        existing.category = existing.category || category
+        existing.unit = existing.unit || unit
+        setInitialPantryQtyById(prev => {
+          const baseline = Number(prev[existing.id])
+          return { ...prev, [existing.id]: Math.max(Number.isFinite(baseline) ? baseline : 0, nextQty) }
+        })
+        updated++
+      } else {
+        const payload = {
+          user_id: userId,
+          name,
+          quantity: qtyToAdd,
+          unit,
+          category,
+          expiry_date: null,
+        }
+        const { data, error } = await supabase.from('pantry_items').insert(payload).select().single()
+        if (data && !error) {
+          setPantryItems(prev => [data, ...prev])
+          localPantry.unshift(data)
+          if (Number.isFinite(Number(data.quantity))) {
+            setInitialPantryQtyById(prev => ({ ...prev, [data.id]: Number(data.quantity) }))
+          }
+          added++
+        }
+      }
+    }
+
+    setPantryLoading(false)
+    setActiveTab('pantry')
+    posthog.capture('bought_items_added_to_pantry', { added, updated, total: boughtItems.length })
+  }
+
   // Helper: find pantry items expiring within N days
   function expiringPantry(daysAhead = 3) {
     const today = getTodayStr()
@@ -2723,7 +2803,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
           </div>
         )}
 
-        {activeTab === 'shopping' && <ShoppingList profile={profile} aiMealPlan={aiMealPlan} onShowPriceHistory={showPriceHistory} />}
+        {activeTab === 'shopping' && <ShoppingList profile={profile} aiMealPlan={aiMealPlan} onShowPriceHistory={showPriceHistory} onAddPurchasedToPantry={addBoughtItemsToPantry} />}
         {activeTab === 'progress' && (
           <ProgressTracker profile={profile} userId={userId} />
         )}
