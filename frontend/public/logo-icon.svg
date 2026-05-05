@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgG" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <!-- AI sparkle glow -->
+    <radialGradient id="glowG" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fde68a" stop-opacity="0.65"/>
+      <stop offset="100%" stop-color="#fde68a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="100" height="100" rx="22" fill="url(#bgG)"/>
+
+  <!-- Soft center glow -->
+  <circle cx="56" cy="51" r="30" fill="white" opacity="0.06"/>
+
+  <!-- ── AI Sparkle (left side, pushing the cart) ── -->
+  <!-- Glow halo -->
+  <circle cx="17" cy="53" r="12" fill="url(#glowG)"/>
+  <!-- 4-pointed sparkle star -->
+  <path d="M17 46 L18.8 51.2 L24 53 L18.8 54.8 L17 60 L15.2 54.8 L10 53 L15.2 51.2 Z" fill="white"/>
+  <!-- Accent dots -->
+  <circle cx="23.5" cy="47.5" r="1.3" fill="white" opacity="0.9"/>
+  <circle cx="11"   cy="47"   r="0.9" fill="white" opacity="0.65"/>
+  <circle cx="24"   cy="58.5" r="1.0" fill="white" opacity="0.7"/>
+  <circle cx="10.5" cy="59.5" r="0.7" fill="white" opacity="0.5"/>
+  <!-- Motion / push lines (pointing right toward the cart) -->
+  <line x1="26" y1="50.5" x2="32" y2="50.5" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>
+  <line x1="26" y1="53"   x2="34" y2="53"   stroke="white" stroke-width="2"   stroke-linecap="round" opacity="0.8"/>
+  <line x1="26" y1="55.5" x2="32" y2="55.5" stroke="white" stroke-width="1.5" stroke-linecap="round" opacity="0.65"/>
+
+  <!-- ── Apple (drawn before cart so basket rim overlaps it — half out / half in) ── -->
+  <!-- Dark outline layer (slightly larger path) -->
+  <path d="M52 29 C50.5 25.5, 42 25.5, 41.5 30.5 C41 35, 41 42, 42 47.5 C43.5 53.5 48 56.5 52 56.5 C56 56.5 60.5 53.5 62 47.5 C63 42 63 35 62.5 30.5 C62 25.5 53.5 25.5 52 29 Z" fill="#1a1a1a"/>
+  <!-- Main red body -->
+  <path d="M52 29.5 C50.5 26.5, 43 26.5, 42.5 31 C42 35.5, 42 42, 43 47 C44.5 52.5 48.5 55.5 52 55.5 C55.5 55.5 59.5 52.5 61 47 C62 42 62 35.5 61.5 31 C61 26.5 53.5 26.5 52 29.5 Z" fill="#ef4444"/>
+  <!-- Darker-red right-side shading (depth, like reference) -->
+  <path d="M58 29 C61.5 31.5, 62.5 38.5, 62 45 C61 51, 57.5 54, 55 55.5 C58.5 53 61.5 47 61 40 C60.5 34.5 59.5 30 58 29 Z" fill="#c51a1a" opacity="0.6"/>
+  <!-- Glossy white highlight — large ellipse -->
+  <ellipse cx="46.5" cy="34" rx="3.8" ry="2.6" fill="white" opacity="0.55" transform="rotate(-28 46.5 34)"/>
+  <!-- Glossy white highlight — small dot -->
+  <circle cx="48.5" cy="31.5" r="1.4" fill="white" opacity="0.8"/>
+  <!-- Brown curved stem -->
+  <path d="M52.5 29.5 C53.2 26.5 54 23.5 52.5 21" stroke="#92400e" stroke-width="2.4" stroke-linecap="round" fill="none"/>
+  <!-- Purple leaf (with outline + vein) -->
+  <path d="M51.5 25 C51.5 25 44.5 19.5 42 22 C42 22 44 28 49.5 26.5 Z" fill="#a855f7" stroke="#7e22ce" stroke-width="0.9" stroke-linejoin="round"/>
+  <line x1="51.5" y1="25" x2="44" y2="23" stroke="#7e22ce" stroke-width="0.7" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- ── Shopping cart (drawn on top so rim frames the apple) ── -->
+  <!-- Handle + basket outline -->
+  <path d="M24 34h6l7.5 23h22l6.5-18H38" stroke="white" stroke-width="4.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <!-- Wheels -->
+  <circle cx="43" cy="62" r="3.5" fill="white"/>
+  <circle cx="59" cy="62" r="3.5" fill="white"/>
+</svg>

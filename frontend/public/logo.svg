@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 80" fill="none">
+  <defs>
+    <linearGradient id="cartGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#059669"/>
+    </linearGradient>
+    <linearGradient id="leafGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a855f7"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ecfdf5"/>
+      <stop offset="100%" stop-color="#f5f3ff"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background pill -->
+  <rect x="0" y="0" width="320" height="80" rx="20" fill="url(#bgGrad)"/>
+
+  <!-- Icon background circle -->
+  <circle cx="40" cy="40" r="30" fill="url(#cartGrad)" opacity="0.12"/>
+
+  <!-- Cart body -->
+  <path d="M22 26h4.5l5.2 18h14.6l4.3-13H30.5" stroke="url(#cartGrad)" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+  <!-- Cart wheels -->
+  <circle cx="36" cy="48.5" r="2.2" fill="url(#cartGrad)"/>
+  <circle cx="47" cy="48.5" r="2.2" fill="url(#cartGrad)"/>
+
+  <!-- Leaf / sprout growing from cart -->
+  <path d="M43 30 C43 30 47 24 53 25 C53 25 52 31 47 32 C47 32 43 33 43 30Z" fill="url(#leafGrad)" opacity="0.9"/>
+  <path d="M43 30 C43 30 39 24 33 26 C33 26 35 32 40 32 C40 32 43 33 43 30Z" fill="url(#leafGrad)" opacity="0.6"/>
+  <line x1="43" y1="30" x2="43" y2="36" stroke="url(#leafGrad)" stroke-width="1.8" stroke-linecap="round"/>
+
+  <!-- Wordmark: Nutri -->
+  <text x="82" y="50" font-family="'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="-0.5" fill="#064e3b">Nutri</text>
+
+  <!-- Wordmark: Cart -->
+  <text x="152" y="50" font-family="'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif" font-size="28" font-weight="700" letter-spacing="-0.5" fill="url(#cartGrad)">Cart</text>
+
+  <!-- Tagline -->
+  <text x="83" y="64" font-family="'SF Pro Display', 'Inter', 'Helvetica Neue', sans-serif" font-size="10" font-weight="400" letter-spacing="1.5" fill="#6b7280">SMART NUTRITION PLANNER</text>
+</svg>

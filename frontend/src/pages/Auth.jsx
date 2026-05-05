@@ -44,7 +44,7 @@ export default function Auth({ onAuth }) {
 
         {/* Header */}
         <div className="flex items-center gap-2 mb-8">
-          <span className="text-2xl">🛒</span>
+          <img src="/logo-icon.svg" alt="NutriCart" className="h-10 w-10" />
           <span className="font-bold text-green-700 text-xl">NutriCart</span>
         </div>
 
