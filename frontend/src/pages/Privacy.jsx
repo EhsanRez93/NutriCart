@@ -3,7 +3,7 @@ export default function Privacy({ onBack }) {
     <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
       <nav className="flex justify-between items-center px-8 py-5 border-b border-gray-100 bg-white/60 backdrop-blur">
         <div className="flex items-center gap-2">
-          <img src="/logo-icon.svg" alt="NutriCart" className="h-9 w-9" />
+          <img src="/NutriCart.svg" alt="NutriCart" className="h-9 w-9" />
           <span className="text-xl font-bold text-green-700">NutriCart</span>
         </div>
         <button

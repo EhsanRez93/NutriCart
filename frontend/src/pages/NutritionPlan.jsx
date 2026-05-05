@@ -1762,7 +1762,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
       {/* Nav */}
       <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
         <div className="flex items-center gap-2">
-          <img src="/logo-icon.svg" alt="NutriCart" className="h-9 w-9" />
+          <img src="/NutriCart.svg" alt="NutriCart" className="h-9 w-9" />
           <span className="font-bold text-green-700 text-lg">NutriCart</span>
         </div>
         <div className="flex items-center gap-3 flex-wrap">

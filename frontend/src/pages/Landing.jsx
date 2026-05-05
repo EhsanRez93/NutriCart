@@ -5,7 +5,7 @@ export default function Landing({ onStart, onNavigate }) {
       {/* Navbar */}
       <nav className="flex justify-between items-center px-8 py-5">
         <div className="flex items-center gap-2">
-          <img src="/logo-icon.svg" alt="NutriCart" className="h-9 w-9" />
+          <img src="/NutriCart.svg" alt="NutriCart" className="h-9 w-9" />
           <span className="text-xl font-bold text-green-700">NutriCart</span>
         </div>
         <button
