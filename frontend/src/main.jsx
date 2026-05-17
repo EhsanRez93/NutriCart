@@ -16,7 +16,14 @@ createRoot(document.getElementById('root')).render(
 )
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
+  window.addEventListener('load', async () => {
+    try {
+      const registrations = await navigator.serviceWorker.getRegistrations()
+      await Promise.all(registrations.map(reg => reg.unregister()))
+    } catch (err) {
+      console.warn('Service worker cleanup failed:', err)
+    }
+
     navigator.serviceWorker.register('/service-worker.js').catch(err => {
       console.warn('Service worker registration failed:', err)
     })
