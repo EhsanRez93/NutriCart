@@ -1,0 +1,50 @@
+name: Keep Supabase + Railway alive
+
+# Pings the Supabase REST API and Railway backend every 6 hours so the
+# free-tier Supabase project never auto-pauses after 7 days of inactivity.
+#
+# Costs nothing. GitHub Actions free-tier runners cover this easily
+# (4 runs/day × ~10 seconds = 1 free-tier minute/day).
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'   # every 6 hours, on the hour
+  workflow_dispatch:        # also runnable manually from the Actions tab
+
+permissions:
+  contents: read            # least privilege — workflow only needs to read the repo
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Ping Supabase REST API (forces real DB query)
+        env:
+          SUPABASE_URL:  https://hwjbnkkfrcsdzfuukhqh.supabase.co
+          SUPABASE_ANON: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imh3amJua2tmcmNzZHpmdXVraHFoIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzc1NDU4NzMsImV4cCI6MjA5MzEyMTg3M30.XOtqBozBy7zu2QT2IF0Ed96Dh-Pt6-xiPUZsLl5owzM
+        run: |
+          # Use HEAD + count to actually generate database activity (not just hit the API gateway).
+          # RLS will scope to anon, so this returns 0 rows but still touches the table.
+          echo "Pinging Supabase..."
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "apikey: $SUPABASE_ANON" \
+            -H "Authorization: Bearer $SUPABASE_ANON" \
+            -H "Prefer: count=exact" \
+            "$SUPABASE_URL/rest/v1/profiles?select=id&limit=1")
+          echo "Supabase responded: HTTP $STATUS"
+          # Anything in the 2xx range (incl. 200, 206) means the DB is alive
+          if [ "$STATUS" -lt 200 ] || [ "$STATUS" -ge 400 ]; then
+            echo "::warning::Supabase ping returned non-OK status $STATUS"
+          fi
+
+      - name: Ping Railway backend
+        run: |
+          echo "Pinging Railway..."
+          STATUS=$(curl -s -o /tmp/health.json -w "%{http_code}" \
+            "https://nutricart-production-cd53.up.railway.app/health")
+          echo "Railway responded: HTTP $STATUS"
+          cat /tmp/health.json
+          if [ "$STATUS" -ne 200 ]; then
+            echo "::warning::Railway ping returned non-200 status $STATUS"
+          fi
