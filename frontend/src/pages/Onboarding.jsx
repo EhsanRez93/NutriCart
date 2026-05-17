@@ -163,8 +163,8 @@ export default function Onboarding({ onComplete }) {
     : `${step + 1} of ${totalSteps} — Holidays`
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center px-6 py-8">
-      <div className="bg-white rounded-3xl shadow-xl p-8 max-w-md w-full">
+    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 flex items-center justify-center px-4 py-8">
+      <div className="bg-white rounded-3xl shadow-xl p-6 sm:p-8 max-w-md w-full">
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
