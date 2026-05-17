@@ -1760,17 +1760,17 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
     <div className="min-h-screen bg-gray-50">
 
       {/* Nav */}
-      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between sticky top-0 z-10 shadow-sm">
-        <div className="flex items-center gap-2">
+      <nav className="bg-white border-b border-gray-200 px-6 py-4 flex flex-wrap items-center justify-between gap-3 sticky top-0 z-10 shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
           <img src="/NutriCart.svg" alt="NutriCart" className="h-9 w-9" />
           <span className="font-bold text-green-700 text-lg">NutriCart</span>
         </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <div className="bg-gray-50 text-gray-600 text-xs px-3 py-1 rounded-full font-mono">
+        <div className="flex flex-wrap items-center gap-3 justify-end min-w-0">
+          <div className="bg-gray-50 text-gray-600 text-xs px-3 py-1 rounded-full font-mono truncate">
             🕐 {currentTime.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })} · {currentTime.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
           </div>
-          <div className="bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full">👤 {profile.name}</div>
-          <div className="bg-gray-100 text-gray-600 text-sm px-3 py-1 rounded-full">🏪 {Array.isArray(profile.store) ? profile.store.join(', ') : profile.store}</div>
+          <div className="bg-green-100 text-green-700 text-sm font-semibold px-3 py-1 rounded-full truncate">👤 {profile.name}</div>
+          <div className="bg-gray-100 text-gray-600 text-sm px-3 py-1 rounded-full truncate">🏪 {Array.isArray(profile.store) ? profile.store.join(', ') : profile.store}</div>
           <button onClick={onSignOut} className="bg-red-50 text-red-600 text-sm px-3 py-1 rounded-full hover:bg-red-100 transition font-semibold">Sign Out</button>
         </div>
       </nav>
@@ -1843,7 +1843,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                   </button>
                 </div>
               </div>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <p className="text-xs font-semibold text-gray-500 mb-1.5">⚡ Energy</p>
                   <div className="flex gap-1">
@@ -1941,7 +1941,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
               </div>
             )}
 
-            <div className="grid grid-cols-4 gap-4 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-6">
               <CalorieRing calories={nutrition.calories} tdee={nutrition.tdee} bmr={nutrition.bmr} adjustment={nutrition.calories - nutrition.tdee} />
               <MacroRing label="Protein"       value={nutrition.protein} unit="g" color="#3b82f6" bgColor="#dbeafe" textColor="text-blue-600"   desc="Muscle building & repair" percentage={(nutrition.protein / 200) * 100} />
               <MacroRing label="Carbohydrates" value={nutrition.carbs}   unit="g" color="#eab308" bgColor="#fef9c3" textColor="text-yellow-600" desc="Energy & brain fuel"       percentage={(nutrition.carbs / 400) * 100} />
@@ -2308,7 +2308,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
 
             <div className="bg-gray-800 text-white rounded-2xl p-5">
               <h3 className="font-bold mb-4">📊 Daily Totals vs Targets</h3>
-              <div className="grid grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
                 {[{ label: 'Calories', actual: totalCalories, target: nutrition.calories, unit: 'kcal' }, { label: 'Protein', actual: totalProtein, target: nutrition.protein, unit: 'g' }, { label: 'Carbs', actual: totalCarbs, target: nutrition.carbs, unit: 'g' }, { label: 'Fats', actual: totalFats, target: nutrition.fats, unit: 'g' }].map((item, i) => {
                   const pct = Math.round((item.actual / item.target) * 100)
                   const ok  = pct >= 85 && pct <= 115
@@ -2503,7 +2503,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             )}
 
             {insightsStats && insightsStats.sampleDays > 0 && (
-              <div className="grid grid-cols-4 gap-3 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
                 {[
                   { label: 'Days logged', value: insightsStats.sampleDays, color: 'text-purple-700' },
                   { label: 'Avg adherence', value: insightsStats.overallAdherencePct ? `${Math.round(insightsStats.overallAdherencePct)}%` : '—', color: 'text-green-700' },
