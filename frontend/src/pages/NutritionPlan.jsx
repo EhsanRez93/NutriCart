@@ -1798,7 +1798,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
         </div>
       </div>
 
-      <div className="max-w-5xl mx-auto px-6 py-8">
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8">
 
         {/* ══ DASHBOARD ══ */}
         {activeTab === 'dashboard' && (
@@ -1948,7 +1948,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
               <MacroRing label="Fats"          value={nutrition.fats}    unit="g" color="#f97316" bgColor="#ffedd5" textColor="text-orange-600" desc="Hormones & absorption"     percentage={(nutrition.fats / 100) * 100} />
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="bg-white rounded-2xl p-5 shadow-sm">
                 <div className="flex items-center justify-between mb-4">
                   <h3 className="font-bold text-gray-800">⏱ Your Timeline</h3>
@@ -2385,7 +2385,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
 
               {/* WEEK VIEW */}
               {calendarView === 'week' && (
-                <div className="grid grid-cols-7 gap-2">
+                <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
+                  <div className="min-w-[28rem] grid grid-cols-7 gap-2">
                   {weekDays.map((day, i) => {
                     const isToday  = day.date === todayStr
                     const planIdx  = startDate ? Math.floor((new Date(day.date) - new Date(startDate)) / 86400000) : -1
@@ -2420,17 +2421,19 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       </Tooltip>
                     )
                   })}
+                  </div>
                 </div>
               )}
 
               {/* MONTH VIEW */}
               {calendarView === 'month' && (
-                <div>
-                  <div className="grid grid-cols-7 gap-1 mb-2">
-                    {DAY_NAMES.map(d => <p key={d} className="text-xs text-gray-400 font-bold text-center py-1">{d}</p>)}
-                  </div>
-                  <div className="grid grid-cols-7 gap-1">
-                    {Array.from({ length: monthData.firstDayOfWeek }, (_, i) => <div key={`e-${i}`} />)}
+                <div className="overflow-x-auto pb-2 -mx-4 px-4 sm:mx-0 sm:px-0">
+                  <div className="min-w-[30rem]">
+                    <div className="grid grid-cols-7 gap-1 mb-2">
+                      {DAY_NAMES.map(d => <p key={d} className="text-xs text-gray-400 font-bold text-center py-1">{d}</p>)}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1">
+                      {Array.from({ length: monthData.firstDayOfWeek }, (_, i) => <div key={`e-${i}`} />)}
                     {monthData.days.map((day, i) => {
                       const isToday  = day.date === todayStr
                       const validIdx = day.planDayIndex
@@ -2468,7 +2471,8 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                     ))}
                   </div>
                 </div>
-              )}
+              </div>
+            )}
             </div>
 
             <div className="mt-4 bg-green-50 border border-green-200 rounded-2xl p-4">
@@ -2726,7 +2730,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
             {pantryItems.length > 0 && (
               <div className="bg-purple-50 border-2 border-purple-200 rounded-2xl px-5 py-4 mb-6">
                 <p className="text-purple-900 font-bold text-sm mb-3">📦 What you have</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
                   {['fridge', 'freezer', 'pantry', 'spices'].map(cat => {
                     const count = pantryItems.filter(p => (p.category || 'pantry') === cat).length
                     const icons = { fridge: '🥬', freezer: '🧊', pantry: '🥫', spices: '🧂' }
@@ -2738,7 +2742,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                       </div>
                     ) : null
                   })}
-                </div>
+                    </div>
               </div>
             )}
 
@@ -2894,7 +2898,7 @@ export default function NutritionPlan({ profile, onBack, onSignOut, onSaveMealPl
                   </button>
                 </div>
               )}
-              <div className="grid grid-cols-12 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
                 <input type="text" placeholder="Item name (e.g. spinach)"
                   value={pantryDraft.name}
                   onChange={e => setPantryDraft({ ...pantryDraft, name: e.target.value })}
